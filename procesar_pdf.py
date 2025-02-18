@@ -117,13 +117,13 @@ def procesar_pdf():
                 words = page.extract_words()
 
                 # Si es la primera página, imprimimos en consola las posiciones
-                if page_index == 0:
-                    words_debug = page.extract_words()
-                    for w in words_debug:
-                        print(f"[Página {page_index+1}] Texto: '{w['text']}' -> "
-                            f"x0: {w['x0']}, x1: {w['x1']}, top: {w['top']}, bottom: {w['bottom']}")
-                else:
-                    words_debug = page.extract_words()
+                #if page_index == 0:
+                 #   words_debug = page.extract_words()
+                  #  for w in words_debug:
+                   #     print(f"[Página {page_index+1}] Texto: '{w['text']}' -> "
+                    #        f"x0: {w['x0']}, x1: {w['x1']}, top: {w['top']}, bottom: {w['bottom']}")
+                #else:
+                 #   words_debug = page.extract_words()
 
 
                 # Agrupamos por 'top' aproximado para formar líneas
