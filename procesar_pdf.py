@@ -4,7 +4,7 @@ import pdfplumber
 import pandas as pd
 import re
 from openpyxl import load_workbook
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 
 def es_fecha_valida(texto):
     """
@@ -59,6 +59,12 @@ def procesar_pdf():
                 messagebox.showinfo("Info", "El PDF está vacío.")
                 return
 
+            periodo_str = ""
+            no_cuenta_str = ""
+            empresa_str = ""
+            no_cliente_str = ""
+            rfc_str = ""
+
             # 1) Detectar las posiciones X de los encabezados en la primera página
             page0_words = pdf.pages[0].extract_words()
             col_positions = {}  # dict { "CARGOS": x_center, "ABONOS": x_center, ... }
@@ -110,6 +116,16 @@ def procesar_pdf():
                 # Extraemos las words con sus coordenadas
                 words = page.extract_words()
 
+                # Si es la primera página, imprimimos en consola las posiciones
+                if page_index == 0:
+                    words_debug = page.extract_words()
+                    for w in words_debug:
+                        print(f"[Página {page_index+1}] Texto: '{w['text']}' -> "
+                            f"x0: {w['x0']}, x1: {w['x1']}, top: {w['top']}, bottom: {w['bottom']}")
+                else:
+                    words_debug = page.extract_words()
+
+
                 # Agrupamos por 'top' aproximado para formar líneas
                 lineas_dict = {}
                 for w in words:
@@ -127,6 +143,42 @@ def procesar_pdf():
 
                     # Convertimos la línea a string (para skip_phrases, etc.)
                     line_text = " ".join(w['text'] for w in words_in_line)
+                    
+                    # revisar el rango para extraer la info del inicio
+                    # periodo => 56.80
+                        # 4) Detectar "Periodo" si quieres
+                    if "Periodo" in line_text and "DEL" in line_text:
+                        # Ej: "Periodo DEL 01/01/2024 AL 31/01/2024"
+                        tokens = line_text.split()
+                        # busca tokens que coincidan con dd/mm/yyyy
+                        fechas = [t for t in tokens if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', t)]
+                        if len(fechas) == 2:
+                            periodo_str = f"{fechas[0]} al {fechas[1]}"
+                        else:
+                            periodo_str = line_text
+                        continue
+       
+
+                    if "No. de Cuenta" in line_text and not no_cuenta_str:
+                        # line_text = "No. de Cuenta 0156337112"
+                        tokens = line_text.split()  # ["No.", "de", "Cuenta", "0156337112"]
+                        no_cuenta_str = tokens[-1]  # "0156337112"
+
+                    # Empresa => ~94.03
+                    if 94.00 <= top_val <= 94.06:
+                        # "TRAFFICLIGHT DE MEXICO SA DE CV"
+                        empresa_str = line_text
+                        continue
+
+                    if "No. de Cliente" in line_text and not no_cliente_str:
+                        tokens = line_text.split()
+                        no_cliente_str = tokens[-1]
+                        continue    
+
+                    if "R.F.C" in line_text and not rfc_str:
+                        tokens = line_text.split()
+                        rfc_str = tokens[-1]
+                        continue        
 
                     # Checar stop_phrases
                     if any(sp in line_text for sp in stop_phrases):
@@ -220,6 +272,12 @@ def procesar_pdf():
             if movimiento_actual:
                 todos_los_movimientos.append(movimiento_actual)
 
+        # print("DEBUG - Datos capturados:")
+        # print(f"Periodo: {periodo_str}")
+        # print(f"No. de Cuenta: {no_cuenta_str}")
+        # print(f"Empresa: {empresa_str}")
+        # print(f"No. de Cliente: {no_cliente_str}")
+
         # Convertir a DataFrame
         df = pd.DataFrame(todos_los_movimientos, columns=[
             "Fecha operación",
@@ -238,6 +296,58 @@ def procesar_pdf():
         # Ajustar ancho de columnas con openpyxl
         wb = load_workbook(ruta_salida)
         ws = wb.active
+
+        # insertar 5 filas arriba
+        ws.insert_rows(1, 6)
+
+        # Añadir título
+        ws["A1"] = f"Banco: BBVA México"
+        ws["A2"] = f"Empresa: {empresa_str}"
+        ws["A3"] = f"No. Cuenta: {no_cuenta_str}"
+        ws["A4"] = f"No. Cliente: {no_cliente_str}"  
+        ws["A5"] = f"Periodo: {periodo_str}"
+        ws["A6"] = f"RFC: {rfc_str}"
+
+
+        #Bordes
+        thin_side = Side(border_style="thin")
+        thin_border = Border(top=thin_side, left=thin_side, right=thin_side, bottom=thin_side)
+
+        #color de fondo para fila encabezados
+        header_fill = PatternFill(start_color="000080", end_color="000080", fill_type="solid")
+        white_font = Font(color="FFFFFF", bold=True)
+
+        # Max de filas y columnas
+        max_row = ws.max_row
+        max_col = ws.max_column
+
+         # 1) Estilamos la fila de encabezados de la tabla (que está en la fila 7)
+        for col in range(1, max_col+1):
+            cell = ws.cell(row=7, column=col)
+            cell.fill = header_fill
+            cell.font = white_font
+            cell.alignment = Alignment(horizontal="center")
+            cell.border = thin_border
+
+        # 2) Estilamos las filas de datos (desde la 8 hasta max_row)
+        for row in range(8, max_row+1):
+            for col in range(1, max_col+1):
+                cell = ws.cell(row=row, column=col)
+                cell.border = thin_border
+                # Podrías poner alignment a la derecha para montos, etc.
+                # if col in [5, 6, 7, 8]:  # Cargos, Abonos, Saldo Op, Saldo Liq
+                #     cell.alignment = Alignment(horizontal="right")
+ 
+
+
+        # # Ajustar estilos
+        # bold_font = Font(bold=True)
+        # for fila_encabezado in range(1, 7):
+        #     cell = ws.cell(row=fila_encabezado, column=1)
+        #     cell.font = bold_font
+
+        #     cell.alignment = Alignment(horizontal="left")
+
         for col in ws.columns:
             max_length = 0
             col_letter = col[0].column_letter
