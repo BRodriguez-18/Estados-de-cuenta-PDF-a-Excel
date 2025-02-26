@@ -3,27 +3,24 @@ from tkinter import filedialog, messagebox
 import pdfplumber
 import pandas as pd
 import re
+import string
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 
-
-
+# Conjunto de meses cortos
 MESES_CORTOS = {"ENE", "FEB", "MAR", "ABR", "MAY", "JUN",
                 "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"}
 
 def es_linea_movimiento(linea):
     """
     Determina si la línea inicia un 'movimiento' nuevo
-    en formato 'dd mmm' en dos tokens separados:
-    - tokens[0] = día (1-2 dígitos)
-    - tokens[1] = mes (3 letras mayúsculas, p. ej. DIC, ENE)
+    con el primer token en formato dd-MES-yy (p.ej. '03-ENE-25').
     """
     tokens = linea.split()
     if not tokens:
         return False
     
     primer_token = tokens[0]
-
     partes = primer_token.split("-")
     if len(partes) != 3:
         return False
@@ -31,10 +28,8 @@ def es_linea_movimiento(linea):
     dia, mes, anio = partes
     if not re.match(r'^\d{1,2}$', dia):
         return False
-    
     if mes not in MESES_CORTOS:
         return False
-
     if not re.match(r'^\d{2}$', anio):
         return False
 
@@ -43,9 +38,11 @@ def es_linea_movimiento(linea):
 def es_numero_monetario(texto):
     """
     Determina si un texto es un número tipo '100,923.30'.
-    Ajusta si tu PDF usa otro formato (p.ej. 100.923,30).
+    Ajusta si tu PDF usa otro formato.
     """
-    return bool(re.match(r'^[\d,]+\.\d{2}$', texto.strip()))
+
+    pattern = r'^\d{1,3}(,\d{3})*\.\d{2}$'
+    return bool(re.match(pattern, texto.strip()))
 
 def dist(a, b):
     """Distancia absoluta entre dos valores."""
@@ -64,6 +61,37 @@ def cargar_archivo():
         entry_archivo.config(state=tk.DISABLED)
         pdf_path = archivo
 
+def agrupar_por_top_con_tolerancia(words, tolerancia=2):
+    """
+    Recibe una lista de 'words' extraídas por pdfplumber y 
+    las agrupa en diccionarios de la forma {top_agrupado: [words_en_esa_linea]}.
+    La clave 'top_agrupado' es un float o int representativo de la línea.
+    
+    'tolerancia' indica cuán cerca (en unidades de 'top') deben estar las palabras
+    para considerarlas parte de la misma línea.
+    """
+    lineas_dict = {}
+
+    for w in words:
+        actual_top = w['top']
+        # Buscamos si hay algún top ya registrado que esté dentro de la tolerancia
+        top_encontrado = None
+        for top_existente in lineas_dict.keys():
+            if abs(top_existente - actual_top) <= tolerancia:
+                top_encontrado = top_existente
+                break
+
+        if top_encontrado is not None:
+            # Agregamos la palabra a la línea existente
+            lineas_dict[top_encontrado].append(w)
+        else:
+            # Creamos una nueva línea
+            lineas_dict[actual_top] = [w]
+
+    # Retornamos las líneas ordenadas por el valor de top
+    lineas_ordenadas = sorted(lineas_dict.items(), key=lambda x: x[0])
+    return lineas_ordenadas
+
 def procesar_pdf():
     global pdf_path
     if not pdf_path:
@@ -76,30 +104,28 @@ def procesar_pdf():
                 messagebox.showinfo("Info", "El PDF está vacío.")
                 return
 
-            # =======================
             # 1) DETECTAR ENCABEZADOS EN LA 1RA PÁGINA
-            # =======================
             page0 = pdf.pages[0]
             words_page0 = page0.extract_words()
 
             encabezados_buscar = ["MONTO DEL DEPOSITO", "MONTO DEL RETIRO", "SALDO"]
-
             col_positions = {}
 
             # Agrupamos las palabras de la primera página por 'top' para formar líneas
-            lineas_dict_page0 = {}
-            for w in words_page0:
-                top_approx = int(w['top'])
-                if top_approx not in lineas_dict_page0:
-                    lineas_dict_page0[top_approx] = []
-                lineas_dict_page0[top_approx].append(w)
+            # lineas_dict_page0 = {}
+            # for w in words_page0:
+            #     top_approx = int(w['top'])
+            #     if top_approx not in lineas_dict_page0:
+            #         lineas_dict_page0[top_approx] = []
+            #     lineas_dict_page0[top_approx].append(w)
 
-            lineas_ordenadas_page0 = sorted(lineas_dict_page0.items(), key=lambda x: x[0])
+            # lineas_ordenadas_page0 = sorted(lineas_dict_page0.items(), key=lambda x: x[0])
+
+            lineas_ordenadas_page0 = agrupar_por_top_con_tolerancia(words_page0, tolerancia=2)
 
             # Buscamos la línea que contenga los 3 encabezados
             for top_val, words_in_line in lineas_ordenadas_page0:
                 line_text_upper = " ".join(w['text'].strip().upper() for w in words_in_line)
-                # Si en esta línea aparecen los 3 encabezados, es la línea real de columnas
                 if all(h in line_text_upper for h in encabezados_buscar):
                     # Extraemos la coordenada de cada encabezado
                     for w in words_in_line:
@@ -111,49 +137,57 @@ def procesar_pdf():
 
             # Ordenamos por la coordenada X
             columnas_ordenadas = sorted(col_positions.items(), key=lambda x: x[1])
-            print("columnas_ordenadas =", columnas_ordenadas)
 
-            # =======================
+
             # 2) VARIABLES PARA ENCABEZADOS DEL EXCEL
-            # =======================
             periodo_str = ""
-            # no_cuenta_str = ""
             empresa_str = ""
             no_cliente_str = ""
             rfc_str = ""
 
-            # =======================
             # 3) FRASES A OMITIR (skip) Y A DETENER (stop)
-            # =======================
-            skip_phrases = [
+            # Probar con las frases en mayusculas
+            skip_phrases = [ 
                 "ESTADO DE CUENTA",
-                "Fecha de corte"
+                "FECHA DE CORTE",
                 "Línea Directa para su empresa:",
-                "Ciudad de México: (55)",
-                "Banco Mercantil del Norte S.A. Institución de Banca Múltiple Grupo Financiero Banorte.",
-                "Nuevo León: RFC: BMN",
+                "CIUDAD DE MÉXICO: (55)",
+                "(81)8156 9640",
+                "CIUDAD DE MÉXICO:",
+                "Guadalajara",
+                "Monterrey",
+                "BANCO MERCANTIL DEL NORTE S.A. INSTITUCIÓN DE BANCA MÚLTIPLE GRUPO FINANCIERO BANORTE.",
+                "Nuevo Leon. RFC BMN930209927",
+                "Resto del país:",
+                "DETALLE DE MOVIMIENTOS",
+                "Enlace Negocios Basica",
+                "Visita nuestra página:",
+                "FECHA",
+                "DESCRIPCIÓN / ESTABLECIMIENTO",
+                "MONTO DEL DEPOSITO",
+                "MONTO DEL RETIRO",
+                "SALDO",
+                "Banco Mercantil del Norte",
             ]
-            skip_phrases = [s.upper() for s in skip_phrases]
+            # skip_phrases = [s.upper() for s in skip_phrases]
 
-            stop_phrases = [
-                 "OTROS",
-            ]
+            # stop_phrases: solo se detiene si aparece en páginas >= 2
+            stop_phrases = ["OTROS"]
 
             start_reading = False
             stop_reading = False
-
             todos_los_movimientos = []
             movimiento_actual = None
 
-            # =======================
-            # 4) RECORRER TODAS LAS PÁGINAS PARA DETECTAR MOVIMIENTOS
-            # =======================
+            # 4) RECORRER TODAS LAS PÁGINAS
             for page_index, page in enumerate(pdf.pages):
                 if stop_reading:
                     break
 
+                # if any (sp in line_text_upper for sp in skip_phrases):
+                #     continue
+
                 words = page.extract_words()
-                # Agrupamos por 'top'
                 lineas_dict = {}
                 for w in words:
                     top_approx = int(w['top'])
@@ -167,18 +201,26 @@ def procesar_pdf():
                     if stop_reading:
                         break
 
+                    # Construir la línea
                     line_text = " ".join(w['text'] for w in words_in_line)
+
+                    # Insertar espacio entre fecha pegada y texto
                     line_text = re.sub(
-                        r'(\d{1,2}-[A-Z]{3}-\d{2})([A-Za-z])',  # 01-DIC-23
-                        r'\1 \2',  
+                        r'(\d{1,2}-[A-Z]{3}-\d{2})([A-Za-z])',
+                        r'\1 \2',
                         line_text
                     )
 
-                    print(f"[DEBUG] Linea {top_val}: {line_text}")
-
+                    # Convertir a mayúsculas para comparaciones
                     line_text_upper = line_text.upper()
 
-                    # Detectar periodo, p. ej. "RESUMEN DEL: 01/DIC/2023 AL 31/DIC/2023"
+                    # Remover skip_phrases (parcialmente) de la línea
+                    # for sp in skip_phrases:
+                    #     line_text_upper = line_text_upper.replace(sp, "")
+
+                    # print(f"[DEBUG] Page {page_index}, top {top_val}: {line_text_upper}")
+
+                    # Detectar periodo
                     if "PERIODO" in line_text_upper and not periodo_str:
                         tokens_line = line_text.split()
                         fechas = [t for t in tokens_line if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', t)]
@@ -188,47 +230,47 @@ def procesar_pdf():
                             periodo_str = line_text
                         continue
 
-                    # # Detectar número de cuenta => "CONTRATO 12300415060"
-                    # if "CONTRATO" in line_text_upper and not no_cuenta_str:
-                    #     tokens_line = line_text.split()
-                    #     no_cuenta_str = tokens_line[-1]
-                    #     continue
-
-                    # Detectar cliente => "CLIENTE: 2855558"
+                    # Detectar No. de Cliente
                     if "NO. DE CLIENTE:" in line_text_upper and not no_cliente_str:
                         tokens_line = line_text.split()
                         no_cliente_str = tokens_line[-1]
                         continue
 
-                    # Detectar RFC => "Registro Federal de Contribuyentes: HST781101TJ8"
+                    # Detectar RFC
                     if "RFC:" in line_text_upper and not rfc_str:
                         tokens_line = line_text.split()
                         rfc_str = tokens_line[-1]
                         continue
 
-                    # Revisar stop_phrases
-                    if page_index >=1 and any(sp in line_text_upper for sp in stop_phrases):
-                        print(f"[DEBUG] Stop phrase detectada: {line_text}")
+                    # Stop phrases (solo en páginas >= 2)
+                    if page_index >= 1 and any(sp in line_text_upper for sp in stop_phrases):
+                        # print("[DEBUG] -> Stop phrase detectada en página >= 2")
                         stop_reading = True
                         break
 
-                    # Empezar a leer movimientos cuando detectemos la primera fecha "dd mmm"
+                    # Empezar a leer movimientos
                     if not start_reading:
                         if es_linea_movimiento(line_text_upper):
+                            # print("[DEBUG] -> Se detecta primer movimiento, start_reading = True")
                             start_reading = True
                         else:
                             continue
-                            # Aún no es movimiento, saltar
+                    # regresar _upper luego
+                    if any(sp in line_text for sp in skip_phrases):
+                        # print("[DEBUG] -> Skip phrase detectada, se omite la línea")
+                        continue    
 
-
-                    # Omitir líneas con skip_phrases
-                    if any(sp in line_text_upper for sp in skip_phrases):
+                    if re.search(r'\b\d+/\d+\b', line_text_upper):
                         continue
 
-                    # ¿Es un nuevo movimiento? => tokens[0] = dd, tokens[1] = mmm
+                    # ¿Es nuevo movimiento?
                     if es_linea_movimiento(line_text_upper):
-                        # Guardar el anterior
+                        # Antes de guardar, limpiar la descripción de skip phrases
                         if movimiento_actual:
+                            # for sp in skip_phrases:
+                            #     movimiento_actual["Descripción / Establecimiento"] = re.sub(
+                            #         re.escape(sp), "", movimiento_actual["Descripción / Establecimiento"], flags=re.IGNORECASE
+                            #     )
                             todos_los_movimientos.append(movimiento_actual)
 
                         tokens_line = line_text_upper.split()
@@ -240,7 +282,7 @@ def procesar_pdf():
                             "Saldo": None
                         }
                     else:
-                        # Continuación
+                        # Continuación de un movimiento
                         if not movimiento_actual:
                             movimiento_actual = {
                                 "Fecha": None,
@@ -250,42 +292,59 @@ def procesar_pdf():
                                 "Saldo": None
                             }
 
-                    # Asignar montos por coordenadas
+                    # Procesar cada token de la línea
                     for w in words_in_line:
+
+                        token_upper = w['text'].upper()
+                        # Si el token contiene alguna de las skip phrases, detener el procesamiento de esta línea
+                        if any(sp in token_upper for sp in skip_phrases):
+                            break
+
                         txt = w['text'].strip()
                         center_w = (w['x0'] + w['x1']) / 2
 
                         if es_numero_monetario(txt):
-                            # Ubicar la columna más cercana
                             if columnas_ordenadas:
                                 col_name, col_center = min(
                                     columnas_ordenadas,
                                     key=lambda x: dist(x[1], center_w)
                                 )
-                                if col_name == "MONTO DEL DEPOSITO":
+                                print(f"[DEBUG] -> Token '{txt}' en columna '{col_name}'")
+                                if col_name in "MONTO DEL DEPOSITO":
                                     movimiento_actual["Monto del deposito"] = txt
-                                elif col_name == "MONTO DEL RETIRO":
+                                elif col_name in "MONTO DEL RETIRO":
                                     movimiento_actual["Monto del retiro"] = txt
-                                elif col_name == "SALDO":
+                                elif col_name in "SALDO":
                                     movimiento_actual["Saldo"] = txt
                             else:
-                                # Si no detectamos columnas, asume Retiros
                                 movimiento_actual["Monto del retiro"] = txt
                         else:
-                            # Texto al concepto (omitir dd y mmm)
-                            if re.match(r'^\d{1,2}$', txt) or txt in MESES_CORTOS:
+                            # Si el token inicia con un formato fecha, separamos la parte de fecha y el resto
+                            m = re.match(r'^(\d{1,2}-[A-Z]{3}-\d{2})(.*)$', txt)
+                            if m:
+                                date_part = m.group(1)
+                                rest = m.group(2)
+                                if movimiento_actual["Fecha"] and date_part.upper() == movimiento_actual["Fecha"]:
+                                    txt = rest.strip()  # usar solo el remanente
+                            clean_txt = txt.strip(string.punctuation)
+                            # Omitir tokens que sean solo dígitos, meses o fecha completa
+                            if re.match(r'^\d{1,2}$', clean_txt):
                                 continue
-                            if re.match(r'^\d{1,2}-[A-Z]{3}-\d{2}$', txt):
-                                continue        
+                            if clean_txt in MESES_CORTOS:
+                                continue
+                            if re.match(r'^\d{1,2}-[A-Z]{3}-\d{2}$', clean_txt):
+                                continue
                             movimiento_actual["Descripción / Establecimiento"] += txt + " "
 
-            # Al terminar
+            # Al terminar, guardar el último movimiento (con limpieza de skip phrases)
             if movimiento_actual:
+                for sp in skip_phrases:
+                    movimiento_actual["Descripción / Establecimiento"] = re.sub(
+                        re.escape(sp), "", movimiento_actual["Descripción / Establecimiento"], flags=re.IGNORECASE
+                    )
                 todos_los_movimientos.append(movimiento_actual)
 
-        # =======================
         # 5) GUARDAR EN EXCEL
-        # =======================
         df = pd.DataFrame(todos_los_movimientos, columns=[
             "Fecha",
             "Descripción / Establecimiento",
@@ -333,8 +392,6 @@ def procesar_pdf():
             for col in range(1, max_col + 1):
                 cell = ws.cell(row=row, column=col)
                 cell.border = thin_border
-                # if col in [3, 4, 5]:
-                #     cell.alignment = Alignment(horizontal="right")
 
         # Ajustar ancho de columnas
         for col in ws.columns:
@@ -360,7 +417,7 @@ def procesar_pdf():
 
 # Interfaz gráfica con tkinter
 root = tk.Tk()
-root.title("Extracción Movimientos - dd mmm (Encabezados en 1ra página)")
+root.title("Extracción Movimientos - dd-MMM-yy con Ajustes")
 root.geometry("600x250")
 
 pdf_path = ""
