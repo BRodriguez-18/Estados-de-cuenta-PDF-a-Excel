@@ -6,11 +6,6 @@ import re
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 
-
-
-MESES_CORTOS = {"ENE", "FEB", "MAR", "ABR", "MAY", "JUN",
-                "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"}
-
 def es_linea_movimiento(linea):
     """
     Determina si la línea inicia un 'movimiento' nuevo
@@ -19,23 +14,13 @@ def es_linea_movimiento(linea):
     - tokens[1] = mes (3 letras mayúsculas, p. ej. DIC, ENE)
     """
     tokens = linea.split()
-    if not tokens:
-        return False
-    
-    primer_token = tokens[0]
-
-    partes = primer_token.split("-")
-    if len(partes) != 3:
-        return False
-    
-    dia, mes, anio = partes
-    if not re.match(r'^\d{1,2}$', dia):
-        return False
-    
-    if mes not in MESES_CORTOS:
+    if len(tokens) < 2:
         return False
 
-    if not re.match(r'^\d{2}$', anio):
+    # Verificar si tokens[0] es dd y tokens[1] es mmm
+    if not re.match(r'^\d{1,2}$', tokens[0]):
+        return False
+    if not re.match(r'^[A-Z]{3}$', tokens[1]):
         return False
 
     return True
@@ -82,7 +67,9 @@ def procesar_pdf():
             page0 = pdf.pages[0]
             words_page0 = page0.extract_words()
 
-            encabezados_buscar = ["MONTO DEL DEPOSITO", "MONTO DEL RETIRO", "SALDO"]
+            encabezados_buscar = ["RETIROS", "DEPOSITOS", "SALDO"]
+            MESES_CORTOS = {"ENE", "FEB", "MAR", "ABR", "MAY", "JUN",
+                "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"}
 
             col_positions = {}
 
@@ -117,7 +104,7 @@ def procesar_pdf():
             # 2) VARIABLES PARA ENCABEZADOS DEL EXCEL
             # =======================
             periodo_str = ""
-            # no_cuenta_str = ""
+            no_cuenta_str = ""
             empresa_str = ""
             no_cliente_str = ""
             rfc_str = ""
@@ -126,17 +113,14 @@ def procesar_pdf():
             # 3) FRASES A OMITIR (skip) Y A DETENER (stop)
             # =======================
             skip_phrases = [
-                "ESTADO DE CUENTA",
-                "Fecha de corte"
-                "Línea Directa para su empresa:",
-                "Ciudad de México: (55)",
-                "Banco Mercantil del Norte S.A. Institución de Banca Múltiple Grupo Financiero Banorte.",
-                "Nuevo León: RFC: BMN",
+                "ESTADO DE CUENTA AL",
+                "Página",
             ]
             skip_phrases = [s.upper() for s in skip_phrases]
 
             stop_phrases = [
-                 "OTROS",
+                "SALDO MINIMO REQUERIDO",
+                # "COMISIONES EFECTIVAMENTE COBRADAS"
             ]
 
             start_reading = False
@@ -168,18 +152,10 @@ def procesar_pdf():
                         break
 
                     line_text = " ".join(w['text'] for w in words_in_line)
-                    line_text = re.sub(
-                        r'(\d{1,2}-[A-Z]{3}-\d{2})([A-Za-z])',  # 01-DIC-23
-                        r'\1 \2',  
-                        line_text
-                    )
-
-                    print(f"[DEBUG] Linea {top_val}: {line_text}")
-
                     line_text_upper = line_text.upper()
 
                     # Detectar periodo, p. ej. "RESUMEN DEL: 01/DIC/2023 AL 31/DIC/2023"
-                    if "PERIODO" in line_text_upper and not periodo_str:
+                    if "RESUMEN" in line_text_upper and "DEL:" in line_text_upper:
                         tokens_line = line_text.split()
                         fechas = [t for t in tokens_line if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', t)]
                         if len(fechas) == 2:
@@ -188,38 +164,39 @@ def procesar_pdf():
                             periodo_str = line_text
                         continue
 
-                    # # Detectar número de cuenta => "CONTRATO 12300415060"
-                    # if "CONTRATO" in line_text_upper and not no_cuenta_str:
-                    #     tokens_line = line_text.split()
-                    #     no_cuenta_str = tokens_line[-1]
-                    #     continue
+                    # Detectar número de cuenta => "CONTRATO 12300415060"
+                    if "CONTRATO" in line_text_upper and not no_cuenta_str:
+                        tokens_line = line_text.split()
+                        no_cuenta_str = tokens_line[-1]
+                        continue
 
                     # Detectar cliente => "CLIENTE: 2855558"
-                    if "NO. DE CLIENTE:" in line_text_upper and not no_cliente_str:
+                    if "CLIENTE:" in line_text_upper and not no_cliente_str:
                         tokens_line = line_text.split()
                         no_cliente_str = tokens_line[-1]
                         continue
 
                     # Detectar RFC => "Registro Federal de Contribuyentes: HST781101TJ8"
-                    if "RFC:" in line_text_upper and not rfc_str:
+                    if "REGISTRO FEDERAL DE CONTRIBUYENTES:" in line_text_upper and not rfc_str:
                         tokens_line = line_text.split()
                         rfc_str = tokens_line[-1]
                         continue
 
                     # Revisar stop_phrases
-                    if page_index >=1 and any(sp in line_text_upper for sp in stop_phrases):
-                        print(f"[DEBUG] Stop phrase detectada: {line_text}")
+                    if any(sp in line_text_upper for sp in stop_phrases):
                         stop_reading = True
                         break
 
                     # Empezar a leer movimientos cuando detectemos la primera fecha "dd mmm"
                     if not start_reading:
-                        if es_linea_movimiento(line_text_upper):
+                        tokens_line = line_text.split()
+                        found_day = any(re.match(r'^\d{1,2}$', t) for t in tokens_line)
+                        found_month = any(re.match(r'^[A-Z]{3}$', t) for t in tokens_line)
+                        if found_day and found_month:
                             start_reading = True
                         else:
-                            continue
                             # Aún no es movimiento, saltar
-
+                            continue
 
                     # Omitir líneas con skip_phrases
                     if any(sp in line_text_upper for sp in skip_phrases):
@@ -233,10 +210,10 @@ def procesar_pdf():
 
                         tokens_line = line_text_upper.split()
                         movimiento_actual = {
-                            "Fecha": tokens_line[0],
-                            "Descripción / Establecimiento": "",
-                            "Monto del deposito": None,
-                            "Monto del retiro": None,
+                            "Fecha": f"{tokens_line[0]} {tokens_line[1]}",
+                            "Concepto": "",
+                            "Retiros": None,
+                            "Depositos": None,
                             "Saldo": None
                         }
                     else:
@@ -244,9 +221,9 @@ def procesar_pdf():
                         if not movimiento_actual:
                             movimiento_actual = {
                                 "Fecha": None,
-                                "Descripción / Establecimiento": "",
-                                "Monto del deposito": None,
-                                "Monto del retiro": None,
+                                "Concepto": "",
+                                "Retiros": None,
+                                "Depositos": None,
                                 "Saldo": None
                             }
 
@@ -262,22 +239,20 @@ def procesar_pdf():
                                     columnas_ordenadas,
                                     key=lambda x: dist(x[1], center_w)
                                 )
-                                if col_name == "MONTO DEL DEPOSITO":
-                                    movimiento_actual["Monto del deposito"] = txt
-                                elif col_name == "MONTO DEL RETIRO":
-                                    movimiento_actual["Monto del retiro"] = txt
+                                if col_name == "RETIROS":
+                                    movimiento_actual["Retiros"] = txt
+                                elif col_name == "DEPOSITOS":
+                                    movimiento_actual["Depositos"] = txt
                                 elif col_name == "SALDO":
                                     movimiento_actual["Saldo"] = txt
                             else:
                                 # Si no detectamos columnas, asume Retiros
-                                movimiento_actual["Monto del retiro"] = txt
+                                movimiento_actual["Retiros"] = txt
                         else:
                             # Texto al concepto (omitir dd y mmm)
                             if re.match(r'^\d{1,2}$', txt) or txt in MESES_CORTOS:
                                 continue
-                            if re.match(r'^\d{1,2}-[A-Z]{3}-\d{2}$', txt):
-                                continue        
-                            movimiento_actual["Descripción / Establecimiento"] += txt + " "
+                            movimiento_actual["Concepto"] += " " + txt
 
             # Al terminar
             if movimiento_actual:
@@ -288,13 +263,13 @@ def procesar_pdf():
         # =======================
         df = pd.DataFrame(todos_los_movimientos, columns=[
             "Fecha",
-            "Descripción / Establecimiento",
-            "Monto del deposito",
-            "Monto del retiro",
+            "Concepto",
+            "Retiros",
+            "Depositos",
             "Saldo"
         ])
 
-        ruta_salida = "movimientos_banorte_dd_mmm.xlsx"
+        ruta_salida = "movimientos_citibanamex_dd_mmm.xlsx"
         df.to_excel(ruta_salida, index=False)
 
         # Ajustes de estilo con openpyxl
@@ -305,11 +280,12 @@ def procesar_pdf():
         ws.insert_rows(1, 6)
 
         # Encabezado
-        ws["A1"] = f"Banco: Banorte"
+        ws["A1"] = f"Banco: Citibanamex"
         ws["A2"] = f"Empresa: {empresa_str}"
-        ws["A3"] = f"No. Cliente: {no_cliente_str}"
-        ws["A4"] = f"Periodo: {periodo_str}"
-        ws["A5"] = f"RFC: {rfc_str}"
+        ws["A3"] = f"No. Cuenta: {no_cuenta_str}"
+        ws["A4"] = f"No. Cliente: {no_cliente_str}"
+        ws["A5"] = f"Periodo: {periodo_str}"
+        ws["A6"] = f"RFC: {rfc_str}"
 
         thin_side = Side(border_style="thin")
         thin_border = Border(top=thin_side, left=thin_side, right=thin_side, bottom=thin_side)
