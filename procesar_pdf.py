@@ -11,6 +11,19 @@ from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 MESES_CORTOS = {"ENE", "FEB", "MAR", "ABR", "MAY", "JUN",
                 "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"}
 
+def ajusta_fechas_en_linea(line_text):
+    """
+    Inserta un espacio si se detecta una fecha en formato dd-MES-yy
+    inmediatamente seguida de letras o dígitos, p.ej. '06-ENE-25ABC' => '06-ENE-25 ABC'.
+
+    Solo hace una pasada, evitando bucles infinitos.
+    """
+    pattern = r'(\d{1,2}-[A-Z]{3}-\d{2})([A-Za-z0-9])'
+    # Usamos re.subn para ver cuántas sustituciones se hacen (útil para debug)
+    new_text, num_subs = re.subn(pattern, r'\1 \2', line_text)
+    # print(f"[DEBUG] Se hicieron {num_subs} sustituciones en esta línea.")
+    return new_text
+
 def es_linea_movimiento(linea):
     """
     Determina si la línea inicia un 'movimiento' nuevo
@@ -40,7 +53,6 @@ def es_numero_monetario(texto):
     Determina si un texto es un número tipo '100,923.30'.
     Ajusta si tu PDF usa otro formato.
     """
-
     pattern = r'^\d{1,3}(,\d{3})*\.\d{2}$'
     return bool(re.match(pattern, texto.strip()))
 
@@ -108,19 +120,10 @@ def procesar_pdf():
             page0 = pdf.pages[0]
             words_page0 = page0.extract_words()
 
-            encabezados_buscar = ["MONTO DEL DEPOSITO", "MONTO DEL RETIRO", "SALDO"]
+            encabezados_buscar = ["DEPOSITO", "RETIRO", "SALDO"]
             col_positions = {}
 
             # Agrupamos las palabras de la primera página por 'top' para formar líneas
-            # lineas_dict_page0 = {}
-            # for w in words_page0:
-            #     top_approx = int(w['top'])
-            #     if top_approx not in lineas_dict_page0:
-            #         lineas_dict_page0[top_approx] = []
-            #     lineas_dict_page0[top_approx].append(w)
-
-            # lineas_ordenadas_page0 = sorted(lineas_dict_page0.items(), key=lambda x: x[0])
-
             lineas_ordenadas_page0 = agrupar_por_top_con_tolerancia(words_page0, tolerancia=2)
 
             # Buscamos la línea que contenga los 3 encabezados
@@ -138,7 +141,6 @@ def procesar_pdf():
             # Ordenamos por la coordenada X
             columnas_ordenadas = sorted(col_positions.items(), key=lambda x: x[1])
 
-
             # 2) VARIABLES PARA ENCABEZADOS DEL EXCEL
             periodo_str = ""
             empresa_str = ""
@@ -146,7 +148,6 @@ def procesar_pdf():
             rfc_str = ""
 
             # 3) FRASES A OMITIR (skip) Y A DETENER (stop)
-            # Probar con las frases en mayusculas
             skip_phrases = [ 
                 "ESTADO DE CUENTA",
                 "FECHA DE CORTE",
@@ -169,8 +170,6 @@ def procesar_pdf():
                 "SALDO",
                 "Banco Mercantil del Norte",
             ]
-            # skip_phrases = [s.upper() for s in skip_phrases]
-
             # stop_phrases: solo se detiene si aparece en páginas >= 2
             stop_phrases = ["OTROS"]
 
@@ -183,9 +182,6 @@ def procesar_pdf():
             for page_index, page in enumerate(pdf.pages):
                 if stop_reading:
                     break
-
-                # if any (sp in line_text_upper for sp in skip_phrases):
-                #     continue
 
                 words = page.extract_words()
                 lineas_dict = {}
@@ -204,7 +200,11 @@ def procesar_pdf():
                     # Construir la línea
                     line_text = " ".join(w['text'] for w in words_in_line)
 
-                    # Insertar espacio entre fecha pegada y texto
+                    # (¡NUEVO!) Ajusta fechas pegadas en la línea, evitando bucles
+                    line_text = ajusta_fechas_en_linea(line_text)
+
+                    # Mantén tu regex que inserta espacio si ve letras pegadas a la fecha
+                    # (ahora abarca parte del caso, pero la mantenemos por compatibilidad)
                     line_text = re.sub(
                         r'(\d{1,2}-[A-Z]{3}-\d{2})([A-Za-z])',
                         r'\1 \2',
@@ -213,12 +213,6 @@ def procesar_pdf():
 
                     # Convertir a mayúsculas para comparaciones
                     line_text_upper = line_text.upper()
-
-                    # Remover skip_phrases (parcialmente) de la línea
-                    # for sp in skip_phrases:
-                    #     line_text_upper = line_text_upper.replace(sp, "")
-
-                    # print(f"[DEBUG] Page {page_index}, top {top_val}: {line_text_upper}")
 
                     # Detectar periodo
                     if "PERIODO" in line_text_upper and not periodo_str:
@@ -244,33 +238,28 @@ def procesar_pdf():
 
                     # Stop phrases (solo en páginas >= 2)
                     if page_index >= 1 and any(sp in line_text_upper for sp in stop_phrases):
-                        # print("[DEBUG] -> Stop phrase detectada en página >= 2")
                         stop_reading = True
                         break
 
                     # Empezar a leer movimientos
                     if not start_reading:
                         if es_linea_movimiento(line_text_upper):
-                            # print("[DEBUG] -> Se detecta primer movimiento, start_reading = True")
                             start_reading = True
                         else:
                             continue
-                    # regresar _upper luego
+
+                    # Omitir la línea si contiene skip_phrases
                     if any(sp in line_text for sp in skip_phrases):
-                        # print("[DEBUG] -> Skip phrase detectada, se omite la línea")
                         continue    
 
+                    # Omitir si contiene algo como 2/17
                     if re.search(r'\b\d+/\d+\b', line_text_upper):
                         continue
 
                     # ¿Es nuevo movimiento?
                     if es_linea_movimiento(line_text_upper):
-                        # Antes de guardar, limpiar la descripción de skip phrases
+                        # Guardar el anterior, si existe
                         if movimiento_actual:
-                            # for sp in skip_phrases:
-                            #     movimiento_actual["Descripción / Establecimiento"] = re.sub(
-                            #         re.escape(sp), "", movimiento_actual["Descripción / Establecimiento"], flags=re.IGNORECASE
-                            #     )
                             todos_los_movimientos.append(movimiento_actual)
 
                         tokens_line = line_text_upper.split()
@@ -294,9 +283,8 @@ def procesar_pdf():
 
                     # Procesar cada token de la línea
                     for w in words_in_line:
-
                         token_upper = w['text'].upper()
-                        # Si el token contiene alguna de las skip phrases, detener el procesamiento de esta línea
+                        # Si el token contiene alguna de las skip phrases, detener
                         if any(sp in token_upper for sp in skip_phrases):
                             break
 
@@ -309,6 +297,7 @@ def procesar_pdf():
                                     columnas_ordenadas,
                                     key=lambda x: dist(x[1], center_w)
                                 )
+                                # Observa que col_name es la clave exacta, p.ej. "MONTO DEL DEPOSITO"
                                 print(f"[DEBUG] -> Token '{txt}' en columna '{col_name}'")
                                 if col_name in "MONTO DEL DEPOSITO":
                                     movimiento_actual["Monto del deposito"] = txt
@@ -325,7 +314,7 @@ def procesar_pdf():
                                 date_part = m.group(1)
                                 rest = m.group(2)
                                 if movimiento_actual["Fecha"] and date_part.upper() == movimiento_actual["Fecha"]:
-                                    txt = rest.strip()  # usar solo el remanente
+                                    txt = rest.strip()
                             clean_txt = txt.strip(string.punctuation)
                             # Omitir tokens que sean solo dígitos, meses o fecha completa
                             if re.match(r'^\d{1,2}$', clean_txt):
@@ -417,7 +406,7 @@ def procesar_pdf():
 
 # Interfaz gráfica con tkinter
 root = tk.Tk()
-root.title("Extracción Movimientos - dd-MMM-yy con Ajustes")
+root.title("Extracción Movimientos - Insertar Espacios Evitando Ciclos Infinitos")
 root.geometry("600x250")
 
 pdf_path = ""
