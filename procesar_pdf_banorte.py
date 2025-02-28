@@ -1,3 +1,5 @@
+import sys
+import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import pdfplumber
@@ -404,20 +406,51 @@ def procesar_pdf():
     except Exception as e:
         messagebox.showerror("Error", f"Ocurrió un error al procesar el PDF:\n{e}")
 
-# Interfaz gráfica con tkinter
-root = tk.Tk()
-root.title("Extracción Movimientos - Insertar Espacios Evitando Ciclos Infinitos")
-root.geometry("600x250")
+def main():
+    # Interfaz gráfica con tkinter
+    global pdf_path, output_folder
+    if len(sys.argv) < 2:
+        print("Uso: python procesar_pdf_banorte.py <carpeta_salida>")
+        return
+    output_folder = sys.argv[1]
 
-pdf_path = ""
+    pdf_path = ""
 
-btn_cargar = tk.Button(root, text="Cargar PDF", command=cargar_archivo, width=30)
-btn_cargar.pack(pady=10)
+    root = tk.Tk()
+    root.title("Extracción Movimientos - Banorte")
+    # root.geometry("600x250")
 
-entry_archivo = tk.Entry(root, width=80, state=tk.DISABLED)
-entry_archivo.pack(padx=10, pady=10)
+    win_width = 600
+    win_height = 250
 
-btn_procesar = tk.Button(root, text="Procesar PDF", command=procesar_pdf, width=30)
-btn_procesar.pack(pady=10)
+    # Obtenemos dimensiones de la pantalla
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
 
-root.mainloop()
+        # Calculamos coordenadas x e y
+    x = (screen_width - win_width) // 2
+    y = (screen_height - win_height) // 2
+    # Ajustamos la geometría: ancho x alto + x + y
+    root.geometry(f"{win_width}x{win_height}+{x}+{y}")
+
+    root.update()
+    root.lift()
+    root.focus_force()
+    root.attributes("-topmost", True)
+    root.after(10, lambda: root.attributes("-topmost", False))
+
+
+    btn_cargar = tk.Button(root, text="Cargar PDF", command=cargar_archivo, width=30)
+    btn_cargar.pack(pady=10)
+
+    global entry_archivo
+    entry_archivo = tk.Entry(root, width=80, state=tk.DISABLED)
+    entry_archivo.pack(padx=10, pady=10)
+
+    btn_procesar = tk.Button(root, text="Procesar PDF", command=procesar_pdf, width=30)
+    btn_procesar.pack(pady=10)
+
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()    

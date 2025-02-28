@@ -1,3 +1,5 @@
+import sys
+import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import pdfplumber
@@ -50,7 +52,7 @@ def cargar_archivo():
         pdf_path = archivo
 
 def procesar_pdf():
-    global pdf_path
+    global pdf_path, output_folder
     if not pdf_path:
         messagebox.showwarning("Advertencia", "No se ha seleccionado un archivo PDF.")
         return
@@ -269,7 +271,7 @@ def procesar_pdf():
             "Saldo"
         ])
 
-        ruta_salida = "movimientos_citibanamex_dd_mmm.xlsx"
+        ruta_salida = os.path.join(output_folder,"movimientos_citibanamex_dd_mmm.xlsx")
         df.to_excel(ruta_salida, index=False)
 
         # Ajustes de estilo con openpyxl
@@ -334,20 +336,51 @@ def procesar_pdf():
     except Exception as e:
         messagebox.showerror("Error", f"Ocurrió un error al procesar el PDF:\n{e}")
 
-# Interfaz gráfica con tkinter
-root = tk.Tk()
-root.title("Extracción Movimientos - dd mmm (Encabezados en 1ra página)")
-root.geometry("600x250")
+def main():
+    # Interfaz gráfica con tkinter
+    global pdf_path, output_folder
+    if len(sys.argv) < 2:
+        print("Uso: python procesar_pdf_banamex.py <carpeta_salida>")
+        return
+    output_folder = sys.argv[1]
 
-pdf_path = ""
+    pdf_path = ""
 
-btn_cargar = tk.Button(root, text="Cargar PDF", command=cargar_archivo, width=30)
-btn_cargar.pack(pady=10)
 
-entry_archivo = tk.Entry(root, width=80, state=tk.DISABLED)
-entry_archivo.pack(padx=10, pady=10)
+    root = tk.Tk()
 
-btn_procesar = tk.Button(root, text="Procesar PDF", command=procesar_pdf, width=30)
-btn_procesar.pack(pady=10)
+    root.title("Extracción Movimientos - banamex")
+    # root.geometry("600x250")
+    win_width = 600
+    win_height = 250
 
-root.mainloop()
+    # Obtenemos dimensiones de la pantalla
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+
+        # Calculamos coordenadas x e y
+    x = (screen_width - win_width) // 2
+    y = (screen_height - win_height) // 2
+    # Ajustamos la geometría: ancho x alto + x + y
+    root.geometry(f"{win_width}x{win_height}+{x}+{y}")
+    #Elevar la ventana por encima de las demas
+    root.update()
+    root.lift()
+    root.focus_force()
+    root.attributes("-topmost", True)
+    root.after(10, lambda: root.attributes("-topmost", False))
+
+    btn_cargar = tk.Button(root, text="Cargar PDF", command=cargar_archivo, width=30)
+    btn_cargar.pack(pady=10)
+
+    global entry_archivo
+    entry_archivo = tk.Entry(root, width=80, state=tk.DISABLED)
+    entry_archivo.pack(padx=10, pady=10)
+
+    btn_procesar = tk.Button(root, text="Procesar PDF", command=procesar_pdf, width=30)
+    btn_procesar.pack(pady=10)
+
+    root.mainloop()
+    
+if __name__ == "__main__":
+    main()    
