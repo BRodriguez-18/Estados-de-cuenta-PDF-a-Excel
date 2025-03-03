@@ -5,7 +5,22 @@ import os
 from PIL import Image, ImageTk  # Para manejar JPG/WEBP/PNG con Pillow
 
 # Variable global para almacenar la carpeta de salida
+RUTA_TXT = "ruta.txt"
 output_dir = None
+
+def load_saved_route():
+    "lee la ultima carpeta de salida de ruta.txt (si existe) y la asigna a output_dir."
+    global output_dir
+    if os.path.exists(RUTA_TXT):
+        with open(RUTA_TXT, "r", encoding="utf-8") as f:
+            folder = f.read().strip()
+            if folder:
+                output_dir.set(folder)
+
+def save_route_to_file(folder):
+    "Guarda la nueva ruta en el archivo ruta.tx"
+    with open(RUTA_TXT, "w", encoding="utf-8") as f:
+        f.write(folder)
 
 def select_output_folder():
     """Permite al usuario seleccionar la carpeta de salida."""
@@ -13,6 +28,7 @@ def select_output_folder():
     folder = filedialog.askdirectory(title="Selecciona carpeta de salida")
     if folder:
         output_dir.set(folder)
+        save_route_to_file(folder)
 
 def run_banamex():
     """Ejecuta procesar_pdf_banamex.py, pasando la carpeta de salida como argumento."""
@@ -29,22 +45,37 @@ def run_banamex():
 
 def run_algo2():
     """Ejecuta procesar_pdf_banorte.py (sin carpeta de salida)."""
+    global output_dir
+    folder = output_dir.get()
+    if not folder:
+        messagebox.showwarning("Advertencia", "No se ha seleccionado carpeta de salida.")
+        return    
     try:
-        subprocess.run(["python3", "procesar_pdf_banorte.py"])
+        subprocess.run(["python3", "procesar_pdf_banorte.py", folder])
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo ejecutar procesar_pdf_banorte.py\n{e}")
 
 def run_algo3():
     """Ejecuta procesar_pdf_bbva.py."""
+    global output_dir
+    folder = output_dir.get()
+    if not folder:
+        messagebox.showwarning("Advertencia", "No se ha seleccionado carpeta de salida.")
+        return    
     try:
-        subprocess.run(["python3", "procesar_pdf_bbva.py"])
+        subprocess.run(["python3", "procesar_pdf_bbva.py", folder])
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo ejecutar procesar_pdf_bbva.py\n{e}")
 
 def run_algo4():
     """Ejecuta procesar_pdf_multiva.py."""
+    global output_dir
+    folder = output_dir.get()
+    if not folder:
+        messagebox.showwarning("Advertencia", "No se ha seleccionado carpeta de salida.")
+        return  
     try:
-        subprocess.run(["python3", "procesar_pdf_multiva.py"])
+        subprocess.run(["python3", "procesar_pdf_multiva.py", folder])
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo ejecutar procesar_pdf_multiva.py\n{e}")
 
@@ -70,6 +101,9 @@ def main():
 
     # Definimos la variable global como tk.StringVar
     output_dir = tk.StringVar(value="")
+
+    #Cargamos la ultima ruta guardada
+    load_saved_route()
 
     # Botón para seleccionar carpeta de salida
     btn_select_folder = tk.Button(root, text="Seleccionar Carpeta de Salida", command=select_output_folder)
