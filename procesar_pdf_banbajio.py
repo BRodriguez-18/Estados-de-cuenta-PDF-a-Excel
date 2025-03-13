@@ -8,46 +8,46 @@ import re
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 
-# Conjunto de meses en forma abreviada
+# -------------------------------------------------
+# Ajusta estos valores a tu PDF
+LEFT_BOUND = 50.0       # Límite izquierdo para NO. REF.
+RIGHT_BOUND = 90.0      # Límite derecho para NO. REF.
+MIN_REF_FRACTION = 0.2  # Umbral mínimo de fracción en NO. REF.
+# -------------------------------------------------
+
 MESES_CORTOS = {"ENE", "FEB", "MAR", "ABR", "MAY", "JUN",
                 "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"}
 
-def es_linea_movimiento(linea):  # ok
+def es_linea_movimiento(line_text):
     """
     Determina si la línea inicia un movimiento nuevo en formato 'dd mmm'.
+    Ej: '14 ENE'
     """
-    tokens = linea.split()
+    tokens = line_text.split()
     if len(tokens) < 2:
-        # DEBUG: No hay suficientes tokens para detectar un movimiento
         return False
-    if not re.match(r'^\d{1,2}$', tokens[0]):
-        # DEBUG: El primer token no es un número válido (día)
+    if not re.match(r'^\d{1,2}$', tokens[0]):  # día
         return False
-    if tokens[1] not in MESES_CORTOS:
-        # DEBUG: El segundo token no coincide con ningún mes esperado
+    if tokens[1] not in MESES_CORTOS:         # mes abreviado
         return False
     return True
 
-def es_numero_monetario(texto): # ok
+def es_numero_monetario(texto):
     """
     Valida montos con/sin '$', con/sin 'USD' al final.
-    Ej: 100,923.30 / $ 100,923.30 / $100,923.30 USD
+    Ej: 100,923.30 / $100,923.30 / $100,923.30 USD
     """
     patron = r'^\$?\s?[\d,]+\.\d{2}(?:\s?USD)?$'
-    resultado = bool(re.match(patron, texto.strip()))
-    # DEBUG: Descomenta la siguiente línea para ver si se detecta correctamente un número monetario
-    # print(f"DEBUG: es_numero_monetario('{texto}') => {resultado}")
-    return resultado
+    return bool(re.match(patron, texto.strip()))
 
-def dist(a, b): # ok
-    """
-    Calcula la distancia absoluta entre dos valores.
-    """
+def dist(a, b):
+    """Distancia absoluta."""
     return abs(a - b)
 
-def merge_tokens(token1, token2): # ok $ y 100.00  //falta 
+def merge_tokens(token1, token2):
     """
-    Une dos tokens (por ejemplo, '$' y '100.00') en uno solo, combinando sus coordenadas.
+    Une dos tokens (por ejemplo, '$' y '100.00') en uno solo,
+    combinando sus coordenadas y textos.
     """
     new_text = token1['text'].strip() + token2['text'].strip()
     new_x0 = min(token1['x0'], token2['x0'])
@@ -59,20 +59,16 @@ def merge_tokens(token1, token2): # ok $ y 100.00  //falta
         'x1': new_x1,
         'top': new_top
     }
-    # DEBUG: Ver el resultado de combinar tokens
-    # print(f"DEBUG: merge_tokens: {token1['text']} + {token2['text']} => {merged}")
     return merged
 
 def detect_headers(page0):
     """
-    Recorre todos los tokens de la primera página para detectar la posición (x central)
-    de cada encabezado de interés.
-    Se buscan:
-      - "NO. REF." (o parte de él, por ejemplo "NO. REF")
-      - "DESCRIPCION DE LA OPERACION"
-      - "DEPOSITOS"
-      - "RETIROS"
-      - "SALDO"
+    Recorre la primera página para detectar la posición (center_x) de:
+      - NO. REF. (si buscas "DOCTO", etc.)
+      - DESCRIPCION DE LA OPERACION
+      - DEPOSITOS
+      - RETIROS
+      - SALDO (p.ej. en la 5ª aparición)
     """
     headers_to_find = {
         "NO. REF.": None,
@@ -82,8 +78,6 @@ def detect_headers(page0):
         "SALDO": None
     }
     words_page0 = page0.extract_words()
-    # DEBUG: Descomenta para ver todos los tokens de la primera página
-    # print("DEBUG: Tokens de la primera página:", words_page0)
 
     saldo_count = 0
     depositos_count = 0
@@ -91,36 +85,33 @@ def detect_headers(page0):
     for w in words_page0:
         txt = w['text'].upper().strip()
         center_x = (w['x0'] + w['x1']) / 2
-        # DEBUG: Mostrar token y posición
-        # print(f"DEBUG: Token='{txt}', center_x={center_x}")
-        if txt == "DOCTO": # ok
-            if headers_to_find["NO. REF."] is None:
-                headers_to_find["NO. REF."] = center_x
-                # print(f"DEBUG: Se detectó 'NO. REF.' en x={center_x}")
-        elif "DESCRIPCION" in txt: 
+
+        # Ejemplo: si buscas "DOCTO" para NO. REF.:
+        if txt == "DOCTO" and headers_to_find["NO. REF."] is None:
+            headers_to_find["NO. REF."] = center_x
+
+        elif "DESCRIPCION" in txt:
             if headers_to_find["DESCRIPCION DE LA OPERACION"] is None:
                 headers_to_find["DESCRIPCION DE LA OPERACION"] = center_x
-                print(f"DEBUG: Se detectó 'DESCRIPCION DE LA OPERACION' en x={center_x}")
+
         elif "DEPOSITOS" in txt:
             depositos_count += 1
             if depositos_count == 2:
                 headers_to_find["DEPOSITOS"] = center_x
-                print(f"DEBUG: Se detectó 'DEPOSITOS' en x={center_x}")
+
         elif "RETIROS" in txt:
             if headers_to_find["RETIROS"] is None:
                 headers_to_find["RETIROS"] = center_x
-                print(f"DEBUG: Se detectó 'RETIROS' en x={center_x}")
+
         elif "SALDO" in txt:
             saldo_count += 1
+            # Ejemplo: a la 5ª vez
             if saldo_count == 5:
                 headers_to_find["SALDO"] = center_x
-                print(f"DEBUG: Se detectó 'SALDO' en x={center_x}")
+
     return headers_to_find
 
 def cargar_archivo():
-    """
-    Abre un cuadro de diálogo para seleccionar archivos PDF y guarda la lista.
-    """
     global pdf_paths
     archivos = filedialog.askopenfilenames(
         title="Selecciona uno o más archivos PDF",
@@ -133,15 +124,8 @@ def cargar_archivo():
         entry_archivo.insert(0, files_text)
         entry_archivo.config(state=tk.DISABLED)
         pdf_paths = archivos
-        # DEBUG: Mostrar archivos seleccionados
-        # print("DEBUG: Archivos seleccionados:", pdf_paths)
 
 def procesar_pdf():
-    """
-    Procesa cada PDF seleccionado: extrae movimientos, asigna campos basándose en la
-    posición de los encabezados y genera un archivo Excel con dos hojas (MXN y USD).
-    Se agregan prints de depuración en puntos clave para detectar errores.
-    """
     global pdf_paths, output_folder
     if not pdf_paths:
         messagebox.showwarning("Advertencia", "No se ha seleccionado un archivo PDF.")
@@ -149,7 +133,6 @@ def procesar_pdf():
 
     for pdf_path in pdf_paths:
         try:
-            # print(f"DEBUG: Procesando PDF: {pdf_path}")
             pdf_name = os.path.basename(pdf_path)
             pdf_stem, pdf_ext = os.path.splitext(pdf_name)
             excel_name = pdf_stem + ".xlsx"
@@ -159,63 +142,53 @@ def procesar_pdf():
                     messagebox.showinfo("Info", "El PDF está vacío.")
                     return
 
-                # --- DETECTAR POSICIÓN DE LOS ENCABEZADOS (PRIMERA PÁGINA) ---
+                # Detectar encabezados
                 page0 = pdf.pages[0]
                 header_positions = detect_headers(page0)
-                # print("DEBUG: Encabezados detectados:", header_positions)
 
-                # --- PREPARAR ESTRUCTURAS PARA MOVIMIENTOS ---
                 mxn_movimientos = []
                 usd_movimientos = []
                 current_moneda = "MXN"
 
-                # Frases para omitir o detener lectura
-                skip_phrases = ["ESTADO DE CUENTA AL", "PÁGINA"]
+                skip_phrases = ["ESTADO DE CUENTA AL", "PÁGINA", "PAGINA", "CONTINUA EN LA SIGUIENTE PAGINA", "NO. REF. /", "DOCTO", "ESTADO DE CUENTA", "NUMERO DE CLIENTE:", "R.F.C."]
                 skip_phrases = [s.upper() for s in skip_phrases]
-                stop_phrases = ["SALDO MINIMO REQUERIDO"]
+                stop_phrases = ["SALDO TOTAL*"]
                 stop_phrases = [s.upper() for s in stop_phrases]
+                restart_phrase = ["DETALLE DE LA CUENTA: CUENTA DE CHEQUES EN DOLARES"]
+                restart_phrase = [s.upper() for s in restart_phrase]
 
                 start_reading = False
                 stop_reading = False
+                restart_phrase_found = False
                 movimiento_actual = None
 
-                # Datos de encabezado extra (se llenan según se detecten)
+                # Datos de encabezado extra
                 periodo_str = ""
                 no_cuenta_str = ""
                 empresa_str = ""
                 no_cliente_str = ""
                 rfc_str = ""
 
-                # --- RECORRER TODAS LAS PÁGINAS ---
                 for page_index, page in enumerate(pdf.pages):
-                    # print(f"DEBUG: Procesando página {page_index + 1}")
                     if stop_reading:
-                        # print("DEBUG: stop_reading activado, saliendo del bucle de páginas")
                         break
 
                     words = page.extract_words()
                     if not words:
-                        # print("DEBUG: No se encontraron palabras en esta página")
                         continue
 
-                    # Agrupar tokens por su coordenada 'top'
+                    # Agrupar tokens por 'top'
                     lineas_dict = {}
                     for w in words:
                         top_approx = int(w['top'])
-                        if top_approx not in lineas_dict:
-                            lineas_dict[top_approx] = []
-                        lineas_dict[top_approx].append(w)
+                        lineas_dict.setdefault(top_approx, []).append(w)
                     lineas_ordenadas = sorted(lineas_dict.items(), key=lambda x: x[0])
 
                     for top_val, words_in_line in lineas_ordenadas:
-                        # DEBUG: Mostrar la línea (valor top y contenido)
-                        line_debug = " ".join(w['text'] for w in words_in_line)
-                        # print(f"DEBUG: Línea en top={top_val}: {line_debug}")
-
                         if stop_reading:
                             break
 
-                        # --- Unir tokens, por ejemplo, "$" y el número siguiente ---
+                        # Unir tokens tipo "$" + "100.00"
                         joined_tokens = []
                         i = 0
                         while i < len(words_in_line):
@@ -227,7 +200,6 @@ def procesar_pdf():
                                 if es_numero_monetario(combined_text):
                                     merged = merge_tokens(token, next_token)
                                     joined_tokens.append(merged)
-                                    # print(f"DEBUG: Tokens combinados: {token['text']} + {next_token['text']} -> {merged['text']}")
                                     i += 2
                                     continue
                                 else:
@@ -237,26 +209,25 @@ def procesar_pdf():
                                 joined_tokens.append(token)
                                 i += 1
 
-                        # Construir la línea de texto a partir de los tokens unidos
                         line_text = " ".join(t['text'].strip() for t in joined_tokens)
                         line_text_upper = line_text.upper()
-                        # print(f"DEBUG: Línea procesada: {line_text}")
 
-                        # --- Omitir líneas con frases que se deben saltar o detener ---
+                        # Omitir líneas con skip_phrases
                         if any(sp in line_text_upper for sp in skip_phrases):
-                            # print("DEBUG: Línea omitida por skip_phrases:", line_text)
                             continue
+                        # Detener si aparece stop_phrases
                         if any(sp in line_text_upper for sp in stop_phrases):
-                            # print("DEBUG: Línea detectada para detener lectura:", line_text)
                             stop_reading = True
                             break
 
-                        # Detectar cambio de moneda a USD
+                       
+                        
+
+                        # Detectar cambio de moneda
                         if "CUENTA DE CHEQUES EN DOLARES" in line_text_upper:
                             current_moneda = "USD"
-                            # print("DEBUG: Cambio de moneda a USD detectado.")
 
-                        # --- Capturar datos de encabezado extra ---
+                        # Capturar datos extra
                         if "RESUMEN" in line_text_upper and "DEL:" in line_text_upper:
                             tokens_line = line_text.split()
                             fechas = [t for t in tokens_line if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', t)]
@@ -264,53 +235,65 @@ def procesar_pdf():
                                 periodo_str = f"{fechas[0]} al {fechas[1]}"
                             else:
                                 periodo_str = line_text
-                            # print("DEBUG: Período detectado:", periodo_str)
                             continue
                         if "CONTRATO" in line_text_upper and not no_cuenta_str:
                             tokens_line = line_text.split()
                             no_cuenta_str = tokens_line[-1]
-                            # print("DEBUG: No. Cuenta detectado:", no_cuenta_str)
                             continue
                         if "NUMERO DE CLIENTE:" in line_text_upper and not no_cliente_str:
                             tokens_line = line_text.split()
                             no_cliente_str = tokens_line[-1]
-                            # print("DEBUG: No. Cliente detectado:", no_cliente_str)
                             continue
                         if "R.F.C." in line_text_upper and not rfc_str:
                             tokens_line = line_text.split()
                             rfc_str = tokens_line[-1]
-                            # print("DEBUG: RFC detectado:", rfc_str)
                             continue
 
-                        # --- Iniciar lectura de movimientos ---
+                        # Iniciar lectura de movimientos
                         if not start_reading:
-                            tokens_line = line_text.split()
-                            found_day = any(re.match(r'^\d{1,2}$', t) for t in tokens_line)
-                            found_month = any(t in MESES_CORTOS for t in tokens_line)
-                            if found_day and found_month:
+                            if es_linea_movimiento(line_text_upper):
                                 start_reading = True
-                                # print("DEBUG: Inicio de lectura de movimientos detectado.")
                             else:
                                 continue
 
-                        # --- Detectar nueva línea de movimiento (por fecha) ---
+                        # Detectar nueva línea de movimiento
                         if es_linea_movimiento(line_text_upper):
+                            # Guardar movimiento anterior
                             if movimiento_actual:
                                 if current_moneda == "USD":
                                     usd_movimientos.append(movimiento_actual)
                                 else:
                                     mxn_movimientos.append(movimiento_actual)
-                                # print("DEBUG: Movimiento anterior guardado:", movimiento_actual)
+
+                            # Creamos un nuevo movimiento con la fecha
                             tokens_line = line_text_upper.split()
+                            nueva_fecha = f"{tokens_line[0]} {tokens_line[1]}"
                             movimiento_actual = {
-                                "FECHA": f"{tokens_line[0]} {tokens_line[1]}",
+                                "FECHA": nueva_fecha,
                                 "NO. REF.": "",
                                 "DESCRIPCION DE LA OPERACION": "",
                                 "DEPOSITOS": None,
                                 "RETIROS": None,
                                 "SALDO": None
                             }
-                            # print("DEBUG: Nuevo movimiento iniciado con fecha:", movimiento_actual["FECHA"])
+
+                            # Para no duplicar día/mes en descripción, filtramos
+                            new_joined_tokens = []
+                            day_found = False
+                            month_found = False
+                            for tk2 in joined_tokens:
+                                t_up = tk2['text'].upper().strip()
+                                if not day_found and re.match(r'^\d{1,2}$', t_up):
+                                    day_found = True
+                                    continue
+                                elif day_found and not month_found and t_up in MESES_CORTOS:
+                                    month_found = True
+                                    continue
+                                else:
+                                    new_joined_tokens.append(tk2)
+
+                            joined_tokens = new_joined_tokens
+
                         else:
                             if not movimiento_actual:
                                 movimiento_actual = {
@@ -322,54 +305,95 @@ def procesar_pdf():
                                     "SALDO": None
                                 }
 
-                        # --- Procesar cada token de la línea para asignar campos ---
+                        # --- Asignar cada token ---
                         for tk in joined_tokens:
                             txt_joined = tk['text'].strip()
-                            center_w = (tk['x0'] + tk['x1']) / 2
+                            x0 = tk['x0']
+                            x1 = tk['x1']
 
+                            # 1) Montos monetarios
                             if es_numero_monetario(txt_joined):
-                                # Asignar montos según la cercanía a los encabezados de DEPOSITOS, RETIROS o SALDO
-                                dist_depositos = dist(center_w, header_positions["DEPOSITOS"]) if header_positions["DEPOSITOS"] is not None else float('inf')
-                                dist_retiros   = dist(center_w, header_positions["RETIROS"])   if header_positions["RETIROS"] is not None else float('inf')
-                                dist_saldo     = dist(center_w, header_positions["SALDO"])     if header_positions["SALDO"] is not None else float('inf')
+                                center_w = (x0 + x1) / 2
+                                dist_depositos = dist(center_w, header_positions["DEPOSITOS"]) if header_positions["DEPOSITOS"] else float('inf')
+                                dist_retiros   = dist(center_w, header_positions["RETIROS"])   if header_positions["RETIROS"] else float('inf')
+                                dist_saldo     = dist(center_w, header_positions["SALDO"])     if header_positions["SALDO"] else float('inf')
                                 min_distance = min(dist_depositos, dist_retiros, dist_saldo)
                                 if min_distance == dist_depositos:
                                     movimiento_actual["DEPOSITOS"] = txt_joined
-                                    # print(f"DEBUG: Asignado {txt_joined} a DEPOSITOS")
                                 elif min_distance == dist_retiros:
                                     movimiento_actual["RETIROS"] = txt_joined
-                                    # print(f"DEBUG: Asignado {txt_joined} a RETIROS")
                                 elif min_distance == dist_saldo:
                                     movimiento_actual["SALDO"] = txt_joined
-                                    # print(f"DEBUG: Asignado {txt_joined} a SALDO")
-                            elif re.match(r'^\d+$', txt_joined) and not movimiento_actual["NO. REF."]:
-                                movimiento_actual["NO. REF."] = txt_joined
-                                # print(f"DEBUG: Asignado {txt_joined} a NO. REF.")
-
-                                # # Evitar tokens que formen parte de la fecha
-                                # if re.match(r'^\d{1,2}$', txt_joined) or txt_joined.upper() in MESES_CORTOS:
-                                #     continue
-                                # # Asignar texto según la cercanía a "NO. REF." o "DESCRIPCION DE LA OPERACION"
-                                # dist_no_ref = dist(center_w, header_positions["NO. REF."]) if header_positions["NO. REF."] is not None else float('inf')
-                                # dist_desc   = dist(center_w, header_positions["DESCRIPCION DE LA OPERACION"]) if header_positions["DESCRIPCION DE LA OPERACION"] is not None else float('inf')
-                                # if dist_no_ref < dist_desc:
-                                #     movimiento_actual["NO. REF."] = (movimiento_actual["NO. REF."].strip() + " " + txt_joined).strip()
-                                #     # print(f"DEBUG: Asignado {txt_joined} a NO. REF.")
-    
-
 
                             else:
-                                movimiento_actual["DESCRIPCION DE LA OPERACION"] = (movimiento_actual["DESCRIPCION DE LA OPERACION"].strip() + " " + txt_joined).strip()
-                                # print(f"DEBUG: Asignado {txt_joined} a DESCRIPCION DE LA OPERACION")
+                                # 2) Dividir token en 3 zonas: [x0, LEFT_BOUND], [LEFT_BOUND, RIGHT_BOUND], [RIGHT_BOUND, x1]
+                                token_width = x1 - x0
+                                if token_width <= 0:
+                                    # Evitamos divisiones raras
+                                    movimiento_actual["DESCRIPCION DE LA OPERACION"] += " " + txt_joined
+                                    continue
 
+                                # Fracción a la IZQUIERDA de LEFT_BOUND
+                                fraction_left = 0.0
+                                if x0 < LEFT_BOUND:
+                                    overlap_left = min(LEFT_BOUND, x1) - x0
+                                    if overlap_left < 0: 
+                                        overlap_left = 0
+                                    fraction_left = max(0, overlap_left / token_width)
+
+                                # Fracción a la DERECHA de RIGHT_BOUND
+                                fraction_right = 0.0
+                                if x1 > RIGHT_BOUND:
+                                    overlap_right = x1 - max(RIGHT_BOUND, x0)
+                                    if overlap_right < 0:
+                                        overlap_right = 0
+                                    fraction_right = max(0, overlap_right / token_width)
+
+                                # Fracción central (NO. REF.)
+                                fraction_ref = 1 - fraction_left - fraction_right
+                                if fraction_ref < 0:
+                                    fraction_ref = 0
+
+                                n = len(txt_joined)
+                                cut_left = int(round(n * fraction_left))
+                                cut_ref = cut_left + int(round(n * fraction_ref))
+
+                                text_left = txt_joined[:cut_left]      # parte "izquierda"
+                                text_ref  = txt_joined[cut_left:cut_ref] # parte "NO. REF."
+                                text_right= txt_joined[cut_ref:]       # parte "derecha"
+
+                                # --- Aplicar umbral mínimo para NO. REF. ---
+                                # Si fraction_ref < MIN_REF_FRACTION, se descarta la parte central
+                                if fraction_ref < MIN_REF_FRACTION:
+                                    # Se manda el token entero a la zona con mayor fracción
+                                    # (Por simplicidad, lo mandamos a DESCRIPCION, 
+                                    #  pero podrías comparar fraction_left vs fraction_right)
+                                    movimiento_actual["DESCRIPCION DE LA OPERACION"] += " " + txt_joined
+                                    continue
+
+                                # Asignar la parte "left" a DESCRIPCION
+                                if text_left:
+                                    movimiento_actual["DESCRIPCION DE LA OPERACION"] += " " + text_left
+
+                                # Asignar la parte "ref" a NO. REF.
+                                if text_ref:
+                                    if movimiento_actual["NO. REF."]:
+                                        movimiento_actual["NO. REF."] += " " + text_ref
+                                    else:
+                                        movimiento_actual["NO. REF."] = text_ref
+
+                                # Asignar la parte "right" a DESCRIPCION
+                                if text_right:
+                                    movimiento_actual["DESCRIPCION DE LA OPERACION"] += " " + text_right
+
+                # Guardar último movimiento
                 if movimiento_actual:
                     if current_moneda == "USD":
                         usd_movimientos.append(movimiento_actual)
                     else:
                         mxn_movimientos.append(movimiento_actual)
-                    # print("DEBUG: Último movimiento agregado:", movimiento_actual)
 
-            # --- CREAR EXCEL CON DOS HOJAS (MXN y USD) ---
+            # Crear DataFrames
             df_mxn = pd.DataFrame(mxn_movimientos, columns=[
                 "FECHA", "NO. REF.", "DESCRIPCION DE LA OPERACION", "DEPOSITOS", "RETIROS", "SALDO"
             ])
@@ -377,9 +401,8 @@ def procesar_pdf():
                 "FECHA", "NO. REF.", "DESCRIPCION DE LA OPERACION", "DEPOSITOS", "RETIROS", "SALDO"
             ])
 
+            # Guardar a Excel
             ruta_salida = os.path.join(output_folder, excel_name)
-            # print("DEBUG: Guardando Excel en:", ruta_salida)
-
             with pd.ExcelWriter(ruta_salida, engine="openpyxl") as writer:
                 df_mxn.to_excel(writer, sheet_name="Movs_MXN", index=False)
                 df_usd.to_excel(writer, sheet_name="Movs_USD", index=False)
@@ -406,13 +429,13 @@ def procesar_pdf():
                 ws_usd["A5"] = f"Periodo: {periodo_str}"
                 ws_usd["A6"] = f"RFC: {rfc_str}"
 
-                # Definir formato de celdas para encabezados y datos
+                # Formato de celdas
                 thin_side = Side(border_style="thin")
                 thin_border = Border(top=thin_side, left=thin_side, right=thin_side, bottom=thin_side)
                 header_fill = PatternFill(start_color="000080", end_color="000080", fill_type="solid")
                 white_font = Font(color="FFFFFF", bold=True)
 
-                # --- Formatear hoja Movs_MXN ---
+                # Formatear Movs_MXN
                 max_row_mxn = ws_mxn.max_row
                 max_col_mxn = ws_mxn.max_column
                 for col in range(1, max_col_mxn + 1):
@@ -438,7 +461,7 @@ def procesar_pdf():
                     for cell in row:
                         cell.alignment = Alignment(wrap_text=True)
 
-                # --- Formatear hoja Movs_USD ---
+                # Formatear Movs_USD
                 max_row_usd = ws_usd.max_row
                 max_col_usd = ws_usd.max_column
                 for col in range(1, max_col_usd + 1):
@@ -465,23 +488,19 @@ def procesar_pdf():
                         cell.alignment = Alignment(wrap_text=True)
 
                 wb.save(ruta_salida)
-                # print("DEBUG: Excel guardado correctamente.")
 
             messagebox.showinfo("Éxito", f"Archivo Excel generado con 2 hojas: {ruta_salida}")
 
         except Exception as e:
-            # print("DEBUG: Error en procesar_pdf:", e)
             messagebox.showerror("Error", f"Ocurrió un error al procesar el PDF:\n{e}")
 
 def main():
     global pdf_paths, output_folder
     if len(sys.argv) < 2:
-        # print("Uso: python procesar_pdf_banamex.py <carpeta_salida>")
         return
     output_folder = sys.argv[1]
     pdf_paths = ""
 
-    # Configuración de la ventana principal de Tkinter
     root = tk.Tk()
     root.title("Extracción Movimientos - banamex")
     win_width = 600
