@@ -64,7 +64,7 @@ def merge_tokens(token1, token2):
 def detect_headers(page0):
     """
     Recorre la primera página para detectar la posición (center_x) de:
-      - NO. REF. (si buscas "DOCTO", etc.)
+      - NO. REF. (buscando "DOCTO", por ejemplo)
       - DESCRIPCION DE LA OPERACION
       - DEPOSITOS
       - RETIROS
@@ -86,26 +86,20 @@ def detect_headers(page0):
         txt = w['text'].upper().strip()
         center_x = (w['x0'] + w['x1']) / 2
 
-        # Ejemplo: si buscas "DOCTO" para NO. REF.:
         if txt == "DOCTO" and headers_to_find["NO. REF."] is None:
             headers_to_find["NO. REF."] = center_x
-
         elif "DESCRIPCION" in txt:
             if headers_to_find["DESCRIPCION DE LA OPERACION"] is None:
                 headers_to_find["DESCRIPCION DE LA OPERACION"] = center_x
-
         elif "DEPOSITOS" in txt:
             depositos_count += 1
             if depositos_count == 2:
                 headers_to_find["DEPOSITOS"] = center_x
-
         elif "RETIROS" in txt:
             if headers_to_find["RETIROS"] is None:
                 headers_to_find["RETIROS"] = center_x
-
         elif "SALDO" in txt:
             saldo_count += 1
-            # Ejemplo: a la 5ª vez
             if saldo_count == 5:
                 headers_to_find["SALDO"] = center_x
 
@@ -131,6 +125,9 @@ def procesar_pdf():
         messagebox.showwarning("Advertencia", "No se ha seleccionado un archivo PDF.")
         return
 
+    # Contador para las ocurrencias de "SALDO INICIAL"
+    saldo_inicial_counter = 0
+
     for pdf_path in pdf_paths:
         try:
             pdf_name = os.path.basename(pdf_path)
@@ -142,7 +139,7 @@ def procesar_pdf():
                     messagebox.showinfo("Info", "El PDF está vacío.")
                     return
 
-                # Detectar encabezados
+                # Detectar encabezados en la primera página
                 page0 = pdf.pages[0]
                 header_positions = detect_headers(page0)
 
@@ -154,12 +151,10 @@ def procesar_pdf():
                 skip_phrases = [s.upper() for s in skip_phrases]
                 stop_phrases = ["SALDO TOTAL*"]
                 stop_phrases = [s.upper() for s in stop_phrases]
-                restart_phrase = ["DETALLE DE LA CUENTA: CUENTA DE CHEQUES EN DOLARES"]
-                restart_phrase = [s.upper() for s in restart_phrase]
 
-                start_reading = False
-                stop_reading = False
-                restart_phrase_found = False
+                # Se usará "SALDO INICIAL" para reiniciar la lectura; de las 4 ocurrencias, se toman la 1ra y la 3ra.
+                # La 1ra ocurrencia se usará para continuar con MXN y la 3ra para USD.
+                reading_active = False
                 movimiento_actual = None
 
                 # Datos de encabezado extra
@@ -170,9 +165,6 @@ def procesar_pdf():
                 rfc_str = ""
 
                 for page_index, page in enumerate(pdf.pages):
-                    if stop_reading:
-                        break
-
                     words = page.extract_words()
                     if not words:
                         continue
@@ -185,9 +177,6 @@ def procesar_pdf():
                     lineas_ordenadas = sorted(lineas_dict.items(), key=lambda x: x[0])
 
                     for top_val, words_in_line in lineas_ordenadas:
-                        if stop_reading:
-                            break
-
                         # Unir tokens tipo "$" + "100.00"
                         joined_tokens = []
                         i = 0
@@ -212,22 +201,7 @@ def procesar_pdf():
                         line_text = " ".join(t['text'].strip() for t in joined_tokens)
                         line_text_upper = line_text.upper()
 
-                        # Omitir líneas con skip_phrases
-                        if any(sp in line_text_upper for sp in skip_phrases):
-                            continue
-                        # Detener si aparece stop_phrases
-                        if any(sp in line_text_upper for sp in stop_phrases):
-                            stop_reading = True
-                            break
-
-                       
-                        
-
-                        # Detectar cambio de moneda
-                        if "CUENTA DE CHEQUES EN DOLARES" in line_text_upper:
-                            current_moneda = "USD"
-
-                        # Capturar datos extra
+                        # Captura de datos extra (fechas, cuenta, cliente, RFC, etc.)
                         if "RESUMEN" in line_text_upper and "DEL:" in line_text_upper:
                             tokens_line = line_text.split()
                             fechas = [t for t in tokens_line if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', t)]
@@ -249,23 +223,45 @@ def procesar_pdf():
                             rfc_str = tokens_line[-1]
                             continue
 
-                        # Iniciar lectura de movimientos
-                        if not start_reading:
-                            if es_linea_movimiento(line_text_upper):
-                                start_reading = True
-                            else:
-                                continue
-
-                        # Detectar nueva línea de movimiento
-                        if es_linea_movimiento(line_text_upper):
-                            # Guardar movimiento anterior
+                        # Detener la lectura si aparece "SALDO TOTAL*"
+                        if any(sp in line_text_upper for sp in stop_phrases):
                             if movimiento_actual:
                                 if current_moneda == "USD":
                                     usd_movimientos.append(movimiento_actual)
                                 else:
                                     mxn_movimientos.append(movimiento_actual)
+                                movimiento_actual = None
+                            reading_active = False
+                            continue
 
-                            # Creamos un nuevo movimiento con la fecha
+                        # Reiniciar la lectura con "SALDO INICIAL"
+                        if "SALDO INICIAL" in line_text_upper:
+                            saldo_inicial_counter += 1
+                            # Solo se usan la 1ra y la 3ra ocurrencia para reiniciar la lectura
+                            if saldo_inicial_counter in (1, 3):
+                                # Si es la tercera ocurrencia, cambiar la moneda a USD
+                                if saldo_inicial_counter == 3:
+                                    current_moneda = "USD"
+                                reading_active = True
+                                # Reiniciar (o descartar) cualquier movimiento en curso
+                                movimiento_actual = None
+                                continue
+
+                        # Omitir líneas con skip_phrases
+                        if any(sp in line_text_upper for sp in skip_phrases):
+                            continue
+
+                        # Procesar movimientos solo si reading_active es True
+                        if not reading_active:
+                            continue
+
+                        # Detectar el inicio de un movimiento
+                        if es_linea_movimiento(line_text_upper):
+                            if movimiento_actual:
+                                if current_moneda == "USD":
+                                    usd_movimientos.append(movimiento_actual)
+                                else:
+                                    mxn_movimientos.append(movimiento_actual)
                             tokens_line = line_text_upper.split()
                             nueva_fecha = f"{tokens_line[0]} {tokens_line[1]}"
                             movimiento_actual = {
@@ -276,8 +272,7 @@ def procesar_pdf():
                                 "RETIROS": None,
                                 "SALDO": None
                             }
-
-                            # Para no duplicar día/mes en descripción, filtramos
+                            # Filtrar tokens para evitar duplicar día/mes en la descripción
                             new_joined_tokens = []
                             day_found = False
                             month_found = False
@@ -291,11 +286,9 @@ def procesar_pdf():
                                     continue
                                 else:
                                     new_joined_tokens.append(tk2)
-
                             joined_tokens = new_joined_tokens
-
                         else:
-                            if not movimiento_actual:
+                            if movimiento_actual is None:
                                 movimiento_actual = {
                                     "FECHA": None,
                                     "NO. REF.": "",
@@ -305,13 +298,12 @@ def procesar_pdf():
                                     "SALDO": None
                                 }
 
-                        # --- Asignar cada token ---
+                        # Asignar cada token al movimiento actual
                         for tk in joined_tokens:
                             txt_joined = tk['text'].strip()
                             x0 = tk['x0']
                             x1 = tk['x1']
 
-                            # 1) Montos monetarios
                             if es_numero_monetario(txt_joined):
                                 center_w = (x0 + x1) / 2
                                 dist_depositos = dist(center_w, header_positions["DEPOSITOS"]) if header_positions["DEPOSITOS"] else float('inf')
@@ -324,76 +316,46 @@ def procesar_pdf():
                                     movimiento_actual["RETIROS"] = txt_joined
                                 elif min_distance == dist_saldo:
                                     movimiento_actual["SALDO"] = txt_joined
-
                             else:
-                                # 2) Dividir token en 3 zonas: [x0, LEFT_BOUND], [LEFT_BOUND, RIGHT_BOUND], [RIGHT_BOUND, x1]
                                 token_width = x1 - x0
                                 if token_width <= 0:
-                                    # Evitamos divisiones raras
                                     movimiento_actual["DESCRIPCION DE LA OPERACION"] += " " + txt_joined
                                     continue
 
-                                # Fracción a la IZQUIERDA de LEFT_BOUND
-                                fraction_left = 0.0
-                                if x0 < LEFT_BOUND:
-                                    overlap_left = min(LEFT_BOUND, x1) - x0
-                                    if overlap_left < 0: 
-                                        overlap_left = 0
-                                    fraction_left = max(0, overlap_left / token_width)
-
-                                # Fracción a la DERECHA de RIGHT_BOUND
-                                fraction_right = 0.0
-                                if x1 > RIGHT_BOUND:
-                                    overlap_right = x1 - max(RIGHT_BOUND, x0)
-                                    if overlap_right < 0:
-                                        overlap_right = 0
-                                    fraction_right = max(0, overlap_right / token_width)
-
-                                # Fracción central (NO. REF.)
-                                fraction_ref = 1 - fraction_left - fraction_right
-                                if fraction_ref < 0:
-                                    fraction_ref = 0
+                                fraction_left = max(0, min(LEFT_BOUND, x1) - x0) / token_width if x0 < LEFT_BOUND else 0
+                                fraction_right = max(0, x1 - max(RIGHT_BOUND, x0)) / token_width if x1 > RIGHT_BOUND else 0
+                                fraction_ref = max(0, 1 - fraction_left - fraction_right)
 
                                 n = len(txt_joined)
                                 cut_left = int(round(n * fraction_left))
                                 cut_ref = cut_left + int(round(n * fraction_ref))
 
-                                text_left = txt_joined[:cut_left]      # parte "izquierda"
-                                text_ref  = txt_joined[cut_left:cut_ref] # parte "NO. REF."
-                                text_right= txt_joined[cut_ref:]       # parte "derecha"
+                                text_left = txt_joined[:cut_left]
+                                text_ref  = txt_joined[cut_left:cut_ref]
+                                text_right= txt_joined[cut_ref:]
 
-                                # --- Aplicar umbral mínimo para NO. REF. ---
-                                # Si fraction_ref < MIN_REF_FRACTION, se descarta la parte central
                                 if fraction_ref < MIN_REF_FRACTION:
-                                    # Se manda el token entero a la zona con mayor fracción
-                                    # (Por simplicidad, lo mandamos a DESCRIPCION, 
-                                    #  pero podrías comparar fraction_left vs fraction_right)
                                     movimiento_actual["DESCRIPCION DE LA OPERACION"] += " " + txt_joined
                                     continue
 
-                                # Asignar la parte "left" a DESCRIPCION
                                 if text_left:
                                     movimiento_actual["DESCRIPCION DE LA OPERACION"] += " " + text_left
-
-                                # Asignar la parte "ref" a NO. REF.
                                 if text_ref:
                                     if movimiento_actual["NO. REF."]:
                                         movimiento_actual["NO. REF."] += " " + text_ref
                                     else:
                                         movimiento_actual["NO. REF."] = text_ref
-
-                                # Asignar la parte "right" a DESCRIPCION
                                 if text_right:
                                     movimiento_actual["DESCRIPCION DE LA OPERACION"] += " " + text_right
 
-                # Guardar último movimiento
+                # Guardar el último movimiento, si existe
                 if movimiento_actual:
                     if current_moneda == "USD":
                         usd_movimientos.append(movimiento_actual)
                     else:
                         mxn_movimientos.append(movimiento_actual)
 
-            # Crear DataFrames
+            # Crear DataFrames y guardarlos en Excel
             df_mxn = pd.DataFrame(mxn_movimientos, columns=[
                 "FECHA", "NO. REF.", "DESCRIPCION DE LA OPERACION", "DEPOSITOS", "RETIROS", "SALDO"
             ])
@@ -401,7 +363,6 @@ def procesar_pdf():
                 "FECHA", "NO. REF.", "DESCRIPCION DE LA OPERACION", "DEPOSITOS", "RETIROS", "SALDO"
             ])
 
-            # Guardar a Excel
             ruta_salida = os.path.join(output_folder, excel_name)
             with pd.ExcelWriter(ruta_salida, engine="openpyxl") as writer:
                 df_mxn.to_excel(writer, sheet_name="Movs_MXN", index=False)
@@ -411,7 +372,7 @@ def procesar_pdf():
                 ws_mxn = wb["Movs_MXN"]
                 ws_usd = wb["Movs_USD"]
 
-                # Encabezado extra en la hoja MXN
+                # Encabezado extra en MXN
                 ws_mxn.insert_rows(1, 6)
                 ws_mxn["A1"] = f"Banco: BanBajío"
                 ws_mxn["A2"] = f"Empresa: {empresa_str}"
@@ -420,7 +381,7 @@ def procesar_pdf():
                 ws_mxn["A5"] = f"Periodo: {periodo_str}"
                 ws_mxn["A6"] = f"RFC: {rfc_str}"
 
-                # Encabezado extra en la hoja USD
+                # Encabezado extra en USD
                 ws_usd.insert_rows(1, 6)
                 ws_usd["A1"] = f"Banco: BanBajío"
                 ws_usd["A2"] = f"Empresa: {empresa_str}"
@@ -429,13 +390,12 @@ def procesar_pdf():
                 ws_usd["A5"] = f"Periodo: {periodo_str}"
                 ws_usd["A6"] = f"RFC: {rfc_str}"
 
-                # Formato de celdas
                 thin_side = Side(border_style="thin")
                 thin_border = Border(top=thin_side, left=thin_side, right=thin_side, bottom=thin_side)
                 header_fill = PatternFill(start_color="000080", end_color="000080", fill_type="solid")
                 white_font = Font(color="FFFFFF", bold=True)
 
-                # Formatear Movs_MXN
+                # Formatear hoja MXN
                 max_row_mxn = ws_mxn.max_row
                 max_col_mxn = ws_mxn.max_column
                 for col in range(1, max_col_mxn + 1):
@@ -461,7 +421,7 @@ def procesar_pdf():
                     for cell in row:
                         cell.alignment = Alignment(wrap_text=True)
 
-                # Formatear Movs_USD
+                # Formatear hoja USD
                 max_row_usd = ws_usd.max_row
                 max_col_usd = ws_usd.max_column
                 for col in range(1, max_col_usd + 1):
