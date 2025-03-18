@@ -80,6 +80,16 @@ def procesar_pdf():
                 # 1) DETECTAR ENCABEZADOS EN LA 1RA PÁGINA
                 # =======================
                 page0 = pdf.pages[0]
+
+                regionEmpresa = (43.5, 71.729, 369, 76.63)
+                regionNoCliente = (479.98, 77.378, 528, 82.279)
+ 
+
+                croppedEmpresa = page0.within_bbox(regionEmpresa)
+                croppedNoCliente = page0.within_bbox(regionNoCliente)
+                empresa_str = croppedEmpresa.extract_text() or ""
+                no_cliente_str = croppedNoCliente.extract_text() or ""
+
                 words_page0 = page0.extract_words()
 
                 encabezados_buscar = ["RETIROS", "DEPOSITOS", "SALDO"]
@@ -88,6 +98,7 @@ def procesar_pdf():
                 # Agrupamos las palabras de la primera página por 'top' para formar líneas
                 lineas_dict_page0 = {}
                 for w in words_page0:
+                    print(f"Texto: {w['text']}, x0: {w['x0']}, x1: {w['x1']}, top: {w['top']}, bottom: {w['bottom']}")
                     top_approx = int(w['top'])
                     if top_approx not in lineas_dict_page0:
                         lineas_dict_page0[top_approx] = []
@@ -114,8 +125,8 @@ def procesar_pdf():
                 # =======================
                 periodo_str = ""
                 no_cuenta_str = ""
-                empresa_str = ""
-                no_cliente_str = ""
+                # empresa_str = ""
+                # no_cliente_str = ""
                 rfc_str = ""
 
                 # =======================
@@ -175,6 +186,22 @@ def procesar_pdf():
                         line_text = " ".join(w['text'] for w in words_in_line)
                         line_text_upper = line_text.upper().strip()
 
+                        if "R.F.C." in line_text_upper and not rfc_str:
+                            tokens_line = line_text.split()
+
+                            if "R.F.C." in tokens_line:
+                                rfc_idx = tokens_line.index("R.F.C.")
+                                rfc_str = " ".join(tokens_line[rfc_idx + 1:])
+                            # rfc_str = tokens_line[-1]
+                            continue
+                        if "PERIODO :" in line_text_upper and not periodo_str:
+                            tokens_line = line_text.split()
+
+                            if "PERIODO" in tokens_line:
+                                periodo_idx = tokens_line.index("PERIODO")
+                                periodo_str = " ".join(tokens_line[periodo_idx + 1:])
+                            # rfc_str = tokens_line[-1]
+                            continue
                         # 1) Footer check => si encontramos algo del footer, cortamos la lectura de la página
                         if any(fp in line_text_upper for fp in footer_phrases):
                             print("Footer detectado en la página. Omitimos el resto de la página.")
