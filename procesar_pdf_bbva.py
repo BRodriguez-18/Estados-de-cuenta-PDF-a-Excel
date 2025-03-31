@@ -8,6 +8,8 @@ import re
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 
+
+
 def es_fecha_valida(texto):
     """
     Verifica si algo como '2/ENE' o '15/FEB' coincide con el patrón de fecha.
@@ -31,6 +33,26 @@ def es_numero_monetario(texto):
     Ajusta si tu PDF usa otro formato (p.ej. 100.923,30).
     """
     return bool(re.match(r'^[\d,]+\.\d{2}$', texto.strip()))
+
+def parse_monetario(txt):
+    """
+    Convierte un texto como '100,923.30' a un float.
+    """
+    txt = txt.strip()
+    sign = 1
+
+    # Verifica si está entre paréntesis (se asume negativo)
+    if txt.startswith("(") and txt.endswith(")"):
+        sign = -1
+        txt = txt[1:-1].strip()
+    # Verifica si empieza con signo "-"
+    elif txt.startswith("-"):
+        sign = -1
+        txt = txt[1:].strip()
+
+    # Elimina comas antes de convertir a float
+    txt = txt.replace(",", "")
+    return sign * float(txt)
 
 def dist(a, b):
     """Distancia absoluta entre dos valores."""
@@ -61,6 +83,8 @@ def procesar_pdf():
         try:
             with pdfplumber.open(pdf_path) as pdf:
 
+
+
                 pdf_name = os.path.basename(pdf_path)
                 pdf_stem, pdf_ext = os.path.splitext(pdf_name)
                 excel_name = pdf_stem + ".xlsx"
@@ -79,12 +103,19 @@ def procesar_pdf():
                 page0_words = pdf.pages[0].extract_words()
                 col_positions = {}  # dict { "CARGOS": x_center, "ABONOS": x_center, ... }
 
+                regionEmpresa = (30, 82.69857999999999, 242.925, 92.69857999999999)
+
+                croppedEmpresa = pdf.pages[0].within_bbox(regionEmpresa)
+                empresa_str = croppedEmpresa.extract_text() or ""
+                print(empresa_str)
+
                 # Ajusta estos nombres según tu PDF:
                 encabezados_buscar = ["CARGOS", "ABONOS", "OPERACIÓN", "LIQUIDACIÓN"]
 
                 for w in page0_words:
                     txt_upper = w['text'].strip().upper()
                     center_x = (w['x0'] + w['x1']) / 2
+                    # print(f"Texto: {w['text']}, x0: {w['x0']}, x1: {w['x1']}, top: {w['top']}, bottom: {w['bottom']}")
                     if txt_upper in encabezados_buscar:
                         col_positions[txt_upper] = center_x
 
@@ -175,10 +206,10 @@ def procesar_pdf():
                             no_cuenta_str = tokens[-1]  # "0156337112"
 
                         # Empresa => ~94.03
-                        if 94.00 <= top_val <= 94.06:
-                            # "TRAFFICLIGHT DE MEXICO SA DE CV"
-                            empresa_str = line_text
-                            continue
+                        # if 94.00 <= top_val <= 94.06:
+                        #     # "TRAFFICLIGHT DE MEXICO SA DE CV"
+                        #     empresa_str = line_text
+                        #     continue
 
                         if "No. de Cliente" in line_text and not no_cliente_str:
                             tokens = line_text.split()
@@ -253,6 +284,7 @@ def procesar_pdf():
 
                             # Si es un número monetario, lo ubicamos en la columna más cercana
                             if es_numero_monetario(txt):
+                                val = parse_monetario(txt)
                                 if columnas_ordenadas:
                                     col_name, col_center = min(
                                         columnas_ordenadas,
@@ -260,16 +292,16 @@ def procesar_pdf():
                                     )
                                     # col_name es algo como "CARGOS", "ABONOS", etc.
                                     if col_name == "CARGOS":
-                                        movimiento_actual["Cargos"] = txt
+                                        movimiento_actual["Cargos"] = val
                                     elif col_name == "ABONOS":
-                                        movimiento_actual["Abonos"] = txt
+                                        movimiento_actual["Abonos"] = val
                                     elif col_name == "OPERACIÓN":
-                                        movimiento_actual["Saldo operación"] = txt
+                                        movimiento_actual["Saldo operación"] = val
                                     elif col_name == "LIQUIDACIÓN":
-                                        movimiento_actual["Saldo liquidación"] = txt
+                                        movimiento_actual["Saldo liquidación"] = val
                                 else:
                                     # Si no detectamos encabezados, por defecto a "Cargos"
-                                    movimiento_actual["Cargos"] = txt
+                                    movimiento_actual["Cargos"] = val
                             else:
                                 # Si no es monetario y no es la fecha de la línea,
                                 # considerarlo parte de la descripción

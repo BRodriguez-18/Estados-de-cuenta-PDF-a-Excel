@@ -41,6 +41,26 @@ def es_numero_monetario(texto):
     """
     return bool(re.match(r'^-?[\d,]+\.\d{2}$', texto.strip()))
 
+def parse_monetario(txt):
+    """
+    Convierte un texto en un número monetario.
+    """
+    txt = txt.strip()
+    sign = 1
+
+    # Verifica si está entre paréntesis (se asume negativo)
+    if txt.startswith("(") and txt.endswith(")"):
+        sign = -1
+        txt = txt[1:-1].strip()
+    # Verifica si empieza con signo "-"
+    elif txt.startswith("-"):
+        sign = -1
+        txt = txt[1:].strip()
+
+    # Elimina comas antes de convertir a float
+    txt = txt.replace(",", "")
+    return sign * float(txt)
+
 def dist(a, b):
     return abs(a - b)
 
@@ -327,6 +347,7 @@ def procesar_pdf():
                             txt = w['text'].strip()
                             center_w = (w['x0'] + w['x1']) / 2
                             if es_numero_monetario(txt):
+                                val = parse_monetario(txt)
                                 if columnas_ordenadas:
                                     col_name, col_center = min(
                                         columnas_ordenadas,
@@ -334,13 +355,13 @@ def procesar_pdf():
                                     )
                                     if col_name == "RETIROS":
                                         if txt.startswith("-"):
-                                            movimiento_actual["Retiros"] = txt
+                                            movimiento_actual["Retiros"] = val
                                     elif col_name == "DEPÓSITOS":
-                                        movimiento_actual["Depósitos"] = txt
+                                        movimiento_actual["Depósitos"] = val
                                     elif col_name == "SALDO":
-                                        movimiento_actual["Saldo"] = txt
+                                        movimiento_actual["Saldo"] = val
                                 else:
-                                    movimiento_actual["Retiros"] = txt
+                                    movimiento_actual["Retiros"] = val
 
                 if movimiento_actual:
                     todos_los_movimientos.append(movimiento_actual)

@@ -34,6 +34,20 @@ def es_numero_monetario(texto):
     """
     return bool(re.match(r'^[\d,]+\.\d{2}$', texto.strip()))
 
+def parse_monetario(txt):
+    """Convertir texto '100,923.30' a número 100923.30."""
+    txt = txt.strip()
+    sign = 1
+
+    if txt.startswith("(") and txt.endswith(")"):
+        sign = -1
+        txt = txt[1:-1].strip()
+    elif txt.startswith("-"):
+        sign = -1
+        txt = txt[1:].strip()
+    txt = txt.replace(",", "")
+    return sign * float(txt)
+
 def dist(a, b):
     """Distancia absoluta entre dos valores."""
     return abs(a - b)
@@ -82,9 +96,16 @@ def procesar_pdf():
 
                 col_positions = {}
 
+                regionEmpresa = (75, 165.25599999999997, 282, 173.25599999999997)
+
+                croppedEmpresa = pdf.pages[0].within_bbox(regionEmpresa)
+                empresa_str = croppedEmpresa.extract_text() or ""
+                print(f"Empresa: {empresa_str}")
+
                 # Agrupamos las palabras de la primera página por 'top' para formar líneas
                 lineas_dict_page0 = {}
                 for w in words_page0:
+                    print(f"Texto: {w['text']}, x0: {w['x0']}, x1: {w['x1']}, top: {w['top']}, bottom: {w['bottom']}")
                     top_approx = int(w['top'])
                     if top_approx not in lineas_dict_page0:
                         lineas_dict_page0[top_approx] = []
@@ -107,14 +128,14 @@ def procesar_pdf():
 
                 # Ordenamos por la coordenada X
                 columnas_ordenadas = sorted(col_positions.items(), key=lambda x: x[1])
-                print("columnas_ordenadas =", columnas_ordenadas)
+                # print("columnas_ordenadas =", columnas_ordenadas)
 
                 # =======================
                 # 2) VARIABLES PARA ENCABEZADOS DEL EXCEL
                 # =======================
                 periodo_str = ""
                 no_cuenta_str = ""
-                empresa_str = ""
+                # empresa_str = ""
                 no_cliente_str = ""
                 rfc_str = ""
 
@@ -174,10 +195,10 @@ def procesar_pdf():
                             continue
 
                         # Detectar número de cuenta => "CONTRATO 12300415060"
-                        if "CONTRATO" in line_text_upper and not no_cuenta_str:
-                            tokens_line = line_text.split()
-                            no_cuenta_str = tokens_line[-1]
-                            continue
+                        # if "CONTRATO" in line_text_upper and not no_cuenta_str:
+                        #     tokens_line = line_text.split()
+                        #     no_cuenta_str = tokens_line[-1]
+                        #     continue
 
                         # Detectar cliente => "CLIENTE: 2855558"
                         if "CLIENTE:" in line_text_upper and not no_cliente_str:
@@ -242,6 +263,7 @@ def procesar_pdf():
                             center_w = (w['x0'] + w['x1']) / 2
 
                             if es_numero_monetario(txt):
+                                val = parse_monetario(txt)
                                 # Ubicar la columna más cercana
                                 if columnas_ordenadas:
                                     col_name, col_center = min(
@@ -249,14 +271,14 @@ def procesar_pdf():
                                         key=lambda x: dist(x[1], center_w)
                                     )
                                     if col_name == "RETIROS":
-                                        movimiento_actual["Retiros"] = txt
+                                        movimiento_actual["Retiros"] = val
                                     elif col_name == "DEPOSITOS":
-                                        movimiento_actual["Depositos"] = txt
+                                        movimiento_actual["Depositos"] = val
                                     elif col_name == "SALDO":
-                                        movimiento_actual["Saldo"] = txt
+                                        movimiento_actual["Saldo"] = val
                                 else:
                                     # Si no detectamos columnas, asume Retiros
-                                    movimiento_actual["Retiros"] = txt
+                                    movimiento_actual["Retiros"] = val
                             else:
                                 # Texto al concepto (omitir dd y mmm)
                                 if re.match(r'^\d{1,2}$', txt) or txt in MESES_CORTOS:
@@ -291,10 +313,9 @@ def procesar_pdf():
             # Encabezado
             ws["A1"] = f"Banco: Citibanamex"
             ws["A2"] = f"Empresa: {empresa_str}"
-            ws["A3"] = f"No. Cuenta: {no_cuenta_str}"
-            ws["A4"] = f"No. Cliente: {no_cliente_str}"
-            ws["A5"] = f"Periodo: {periodo_str}"
-            ws["A6"] = f"RFC: {rfc_str}"
+            ws["A3"] = f"No. Cliente: {no_cliente_str}"
+            ws["A4"] = f"Periodo: {periodo_str}"
+            ws["A5"] = f"RFC: {rfc_str}"
 
             thin_side = Side(border_style="thin")
             thin_border = Border(top=thin_side, left=thin_side, right=thin_side, bottom=thin_side)

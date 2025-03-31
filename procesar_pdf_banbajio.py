@@ -18,10 +18,15 @@ MIN_REF_FRACTION = 0.2  # Umbral mínimo de fracción en NO. REF.
 MESES_CORTOS = {"ENE", "FEB", "MAR", "ABR", "MAY", "JUN",
                 "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"}
 
+HEADER_SEQUENCE = [
+    "NO.", "REF.", "/", "FECHA", 
+    "DESCRIPCION", "DE", "LA", "OPERACION", 
+    "DEPOSITOS", "RETIROS", "SALDO"
+]
+
 def es_linea_movimiento(line_text):
     """
-    Determina si la línea inicia un movimiento nuevo en formato 'dd mmm'.
-    Ej: '14 ENE'
+    Determina si la línea inicia un movimiento nuevo en formato 'dd mmm aa'.
     """
     tokens = line_text.split()
     if len(tokens) < 2:
@@ -32,6 +37,15 @@ def es_linea_movimiento(line_text):
         return False
     return True
 
+def is_repeated_header_in_order(tokens_line):
+    """
+    Devuelve True si la línea coincide con la secuencia exacta de HEADER_SEQUENCE.
+    """
+    # Obtenemos la lista de strings (upper):
+    token_texts = [ t['text'].strip().upper() for t in tokens_line ]
+    # Comparamos si es idéntica:
+    return token_texts == HEADER_SEQUENCE
+
 def es_numero_monetario(texto):
     """
     Valida montos con/sin '$', con/sin 'USD' al final.
@@ -39,6 +53,27 @@ def es_numero_monetario(texto):
     """
     patron = r'^\$?\s?[\d,]+\.\d{2}(?:\s?USD)?$'
     return bool(re.match(patron, texto.strip()))
+
+def parse_monetario(txt):
+    """
+    Convierte un texto monetario en un número flotante.
+    Ej: "$100,923.30 USD" -> 100923.3
+    """
+    txt = txt.strip()
+    sign = 1
+
+    # Verifica si está entre paréntesis (se asume negativo)
+    if txt.startswith("(") and txt.endswith(")"):
+        sign = -1
+        txt = txt[1:-1].strip()
+    # Verifica si empieza con signo "-"
+    elif txt.startswith("-"):
+        sign = -1
+        txt = txt[1:].strip()
+
+    # Elimina comas antes de convertir a float
+    txt = txt.replace(",", "")
+    return sign * float(txt)
 
 def dist(a, b):
     """Distancia absoluta."""
@@ -83,6 +118,7 @@ def detect_headers(page0):
     depositos_count = 0
 
     for w in words_page0:
+        print(f"(text={w['text']} ,x0={w['x0']}, x1={w['x1']}, top={w['top']}), bootom={w['bottom']}")
         txt = w['text'].upper().strip()
         center_x = (w['x0'] + w['x1']) / 2
 
@@ -141,13 +177,26 @@ def procesar_pdf():
 
                 # Detectar encabezados en la primera página
                 page0 = pdf.pages[0]
+
+                regionEmpresa = (36.84822947856002,118.49952120004798,340,126.49952760004805)
+                regionNoCliente = (429.48304358616, 60.71015496859195, 471 ,68.71016136859203)
+                regionPeriodo = (381.47930518320004, 41.774519820095975, 540, 49.77452622009605)
+                croppedEmpresa = page0.within_bbox(regionEmpresa)
+                croppedNoCliente = page0.within_bbox(regionNoCliente)
+                croppedPeriodo = page0.within_bbox(regionPeriodo)
+                empresa_str = croppedEmpresa.extract_text() or ""
+                no_cliente_str = croppedNoCliente.extract_text() or ""
+                periodo_str = croppedPeriodo.extract_text() or ""
+
+
+
                 header_positions = detect_headers(page0)
 
                 mxn_movimientos = []
                 usd_movimientos = []
                 current_moneda = "MXN"
 
-                skip_phrases = ["ESTADO DE CUENTA AL", "PÁGINA", "PAGINA", "CONTINUA EN LA SIGUIENTE PAGINA", "NO. REF. /", "DOCTO", "ESTADO DE CUENTA", "NUMERO DE CLIENTE:", "R.F.C."]
+                skip_phrases = ["ESTADO DE CUENTA AL", "PÁGINA", "PAGINA", "CONTINUA EN LA SIGUIENTE PAGINA", "NO. REF. /", "DOCTO", "ESTADO DE CUENTA", "NUMERO DE CLIENTE", "R.F.C."]
                 skip_phrases = [s.upper() for s in skip_phrases]
                 stop_phrases = ["SALDO TOTAL*"]
                 stop_phrases = [s.upper() for s in stop_phrases]
@@ -158,10 +207,10 @@ def procesar_pdf():
                 movimiento_actual = None
 
                 # Datos de encabezado extra
-                periodo_str = ""
+                # periodo_str = ""
                 no_cuenta_str = ""
-                empresa_str = ""
-                no_cliente_str = ""
+                # empresa_str = ""
+                # no_cliente_str = ""
                 rfc_str = ""
 
                 for page_index, page in enumerate(pdf.pages):
@@ -214,10 +263,7 @@ def procesar_pdf():
                             tokens_line = line_text.split()
                             no_cuenta_str = tokens_line[-1]
                             continue
-                        if "NUMERO DE CLIENTE:" in line_text_upper and not no_cliente_str:
-                            tokens_line = line_text.split()
-                            no_cliente_str = tokens_line[-1]
-                            continue
+                        
                         if "R.F.C." in line_text_upper and not rfc_str:
                             tokens_line = line_text.split()
                             rfc_str = tokens_line[-1]
@@ -376,19 +422,19 @@ def procesar_pdf():
                 ws_mxn.insert_rows(1, 6)
                 ws_mxn["A1"] = f"Banco: BanBajío"
                 ws_mxn["A2"] = f"Empresa: {empresa_str}"
-                ws_mxn["A3"] = f"No. Cuenta: {no_cuenta_str}"
-                ws_mxn["A4"] = f"No. Cliente: {no_cliente_str}"
-                ws_mxn["A5"] = f"Periodo: {periodo_str}"
-                ws_mxn["A6"] = f"RFC: {rfc_str}"
+                # ws_mxn["A3"] = f"No. Cuenta: {no_cuenta_str}"
+                ws_mxn["A3"] = f"No. Cliente: {no_cliente_str}"
+                ws_mxn["A4"] = f"Periodo: {periodo_str}"
+                ws_mxn["A5"] = f"RFC: {rfc_str}"
 
                 # Encabezado extra en USD
                 ws_usd.insert_rows(1, 6)
                 ws_usd["A1"] = f"Banco: BanBajío"
                 ws_usd["A2"] = f"Empresa: {empresa_str}"
-                ws_usd["A3"] = f"No. Cuenta: {no_cuenta_str}"
-                ws_usd["A4"] = f"No. Cliente: {no_cliente_str}"
-                ws_usd["A5"] = f"Periodo: {periodo_str}"
-                ws_usd["A6"] = f"RFC: {rfc_str}"
+                # ws_usd["A3"] = f"No. Cuenta: {no_cuenta_str}"
+                ws_usd["A3"] = f"No. Cliente: {no_cliente_str}"
+                ws_usd["A4"] = f"Periodo: {periodo_str}"
+                ws_usd["A5"] = f"RFC: {rfc_str}"
 
                 thin_side = Side(border_style="thin")
                 thin_border = Border(top=thin_side, left=thin_side, right=thin_side, bottom=thin_side)
@@ -462,7 +508,7 @@ def main():
     pdf_paths = ""
 
     root = tk.Tk()
-    root.title("Extracción Movimientos - banamex")
+    root.title("Extracción Movimientos - banbajio")
     win_width = 600
     win_height = 250
 

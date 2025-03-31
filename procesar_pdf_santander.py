@@ -41,6 +41,26 @@ def es_numero_monetario(texto):
     """
     return bool(re.match(r'^[\d,]+\.\d{2}$', texto.strip()))
 
+def parse_monetario(txt):
+    """
+    Convierte un texto en formato '100,923.30' a un float.
+    """
+    txt = txt.strip()
+    sign = 1
+
+    # Verifica si está entre paréntesis (se asume negativo)
+    if txt.startswith("(") and txt.endswith(")"):
+        sign = -1
+        txt = txt[1:-1].strip()
+    # Verifica si empieza con signo "-"
+    elif txt.startswith("-"):
+        sign = -1
+        txt = txt[1:].strip()
+
+    # Elimina comas antes de convertir a float
+    txt = txt.replace(",", "")
+    return sign * float(txt)
+
 def dist(a, b):
     """Distancia absoluta entre dos valores."""
     return abs(a - b)
@@ -280,19 +300,20 @@ def procesar_pdf():
 
                             # b) Número monetario
                             if es_numero_monetario(txt):
+                                val=parse_monetario(txt)
                                 if columnas_ordenadas:
                                     col_name, col_center = min(
                                         columnas_ordenadas,
                                         key=lambda x: dist(x[1], center_w)
                                     )
                                     if col_name == "DEPOSITOS":
-                                        movimiento_actual["Depositos"] = txt
+                                        movimiento_actual["Depositos"] = val
                                     elif col_name == "RETIROS":
-                                        movimiento_actual["Retiros"] = txt
+                                        movimiento_actual["Retiros"] = val
                                     elif col_name == "SALDO":
-                                        movimiento_actual["Saldo"] = txt
+                                        movimiento_actual["Saldo"] = val
                                 else:
-                                    movimiento_actual["Depositos"] = txt
+                                    movimiento_actual["Depositos"] = val
                             else:
                                 # c) Descripción
                                 if txt not in movimiento_actual.get("Fecha_tokens", []):
@@ -326,10 +347,10 @@ def procesar_pdf():
             ws.insert_rows(1, 6)
             ws["A1"] = f"Banco: Santander"
             ws["A2"] = f"Empresa: {empresa_str}"
-            ws["A3"] = f"No. Cuenta: {no_cuenta_str}"
-            ws["A4"] = f"No. Cliente: {no_cliente_str}"
-            ws["A5"] = f"Periodo: {periodo_str}"
-            ws["A6"] = f"RFC: {rfc_str}"
+            # ws["A3"] = f"No. Cuenta: {no_cuenta_str}"
+            ws["A3"] = f"No. Cliente: {no_cliente_str}"
+            ws["A4"] = f"Periodo: {periodo_str}"
+            ws["A5"] = f"RFC: {rfc_str}"
 
             thin_side = Side(border_style="thin")
             thin_border = Border(top=thin_side, left=thin_side, right=thin_side, bottom=thin_side)

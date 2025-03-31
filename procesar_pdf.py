@@ -79,6 +79,54 @@ def run_algo4():
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo ejecutar procesar_pdf_multiva.py\n{e}")
 
+def run_banbajio():
+    """Ejecuta el script de banbajio"""
+    global output_dir
+    folder = output_dir.get()
+    if not folder:
+        messagebox.showwarning("Advertencia", "No se ha seleccionado carpeta de salida.")
+        return
+    try:
+        subprocess.run(["python3", "procesar_pdf_banbajio.py", folder])
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo ejecutar procesar_pdf_banbajio.py\n{e}")    
+
+def run_santander():
+    """Ejecuta el script de santander"""
+    global output_dir
+    folder = output_dir.get()
+    if not folder:
+        messagebox.showwarning("Advertencia", "No se ha seleccionado carpeta de salida.")
+        return
+    try:
+        subprocess.run(["python3", "procesar_pdf_santander.py", folder])
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo ejecutar procesar_pdf_santander.py\n{e}")    
+
+def run_monex():
+    """Ejecuta el script de monex"""
+    global output_dir
+    folder = output_dir.get()
+    if not folder:
+        messagebox.showwarning("Advertencia", "No se ha seleccionado carpeta de salida.")
+        return
+    try:
+        subprocess.run(["python3", "procesar_pdf_monex.py", folder])
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo ejecutar procesar_pdf_monex.py\n{e}")
+
+def run_mifel():
+    global output_dir
+    folder = output_dir.get()
+    if not folder:
+        messagebox.showwarning("Advertencia", "No se ha seleccionado carpeta de salida.")
+        return
+    try:
+        subprocess.run(["python3", "procesar_pdf_mifel.py", folder])
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo ejecutar procesar_pdf_mifel.py\n{e}")
+
+
 def main():
     global output_dir
     root = tk.Tk()
@@ -146,23 +194,58 @@ def main():
     img4_resized = img4_original.resize(img_size, Image.Resampling.LANCZOS)
     logo4 = ImageTk.PhotoImage(img4_resized)
 
+    #5) banbajio
+    img5_path = os.path.join(logos_path, "banbajio.jpg")
+    img5_original = Image.open(img5_path)
+    img5_resized = img5_original.resize(img_size, Image.Resampling.LANCZOS)
+    logo5 = ImageTk.PhotoImage(img5_resized)
+
+    #6) santander
+    img6_path = os.path.join(logos_path, "santander.png")
+    img6_original = Image.open(img6_path)
+    img6_resized = img6_original.resize(img_size, Image.Resampling.LANCZOS)
+    logo6 = ImageTk.PhotoImage(img6_resized)
+
+    #7) monex
+    img7_path = os.path.join(logos_path, "monex.png")
+    img7_original = Image.open(img7_path)
+    img7_resized = img7_original.resize(img_size, Image.Resampling.LANCZOS)
+    logo7 = ImageTk.PhotoImage(img7_resized)
+
+    img8_path = os.path.join(logos_path, "mifel.png")
+    img8_original = Image.open(img8_path)
+    img8_resized = img8_original.resize(img_size, Image.Resampling.LANCZOS)
+    logo8 = ImageTk.PhotoImage(img8_resized)
+
     # Creamos 4 botones con sus imágenes
     btn1 = tk.Button(frame, image=logo1, command=run_banamex)
     btn2 = tk.Button(frame, image=logo2, command=run_algo2)
     btn3 = tk.Button(frame, image=logo3, command=run_algo3)
     btn4 = tk.Button(frame, image=logo4, command=run_algo4)
+    btn5 = tk.Button(frame, image=logo5, command=run_banbajio)
+    btn6 = tk.Button(frame, image=logo6, command=run_santander)
+    btn7 = tk.Button(frame, image=logo7, command=run_monex)
+    btn8 = tk.Button(frame, image=logo8, command=run_mifel)
 
     # Ubicamos en cuadrícula 2x2
     btn1.grid(row=0, column=0, padx=20, pady=20)
     btn2.grid(row=0, column=1, padx=20, pady=20)
     btn3.grid(row=1, column=0, padx=20, pady=20)
     btn4.grid(row=1, column=1, padx=20, pady=20)
+    btn5.grid(row=0, column=2, padx=20, pady=20)
+    btn6.grid(row=1, column=2, padx=20, pady=20)
+    btn7.grid(row=0, column=3, padx=20, pady=20)   
+    btn8.grid(row=1, column=3, padx=20, pady=20) 
 
     # Evitar que Python limpie las imágenes
     root.logo1 = logo1
     root.logo2 = logo2
     root.logo3 = logo3
     root.logo4 = logo4
+    root.logo5 = logo5
+    root.logo6 = logo6
+    root.logo7 = logo7
+    root.logo8 = logo8
 
     root.mainloop()
 
