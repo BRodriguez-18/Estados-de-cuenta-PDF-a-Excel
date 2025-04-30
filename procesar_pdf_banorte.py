@@ -539,6 +539,21 @@ def dist(a, b):
     """Distancia absoluta entre dos valores."""
     return abs(a - b)
 
+def agrupa(words):
+    d={}
+    for w in words:
+        d.setdefault(int(w['top']), []).append(w)
+    return sorted(d.items())
+
+def debug_page(pdf):
+    if len(pdf.pages)<2: return
+    print("\n── DEBUG PAGE 2 ─────────────────────────────────────")
+    for top,grp in agrupa(pdf.pages[1].extract_words()):
+        print(f"[top={top:>4}] "+" ".join(w['text'] for w in grp))
+        for w in grp:
+            print(f"     ↳ '{w['text']}'  x0={w['x0']:.1f}  x1={w['x1']:.1f}  bottom={w['bottom']:.1f}")
+    print("──────────────────────────────────────────────────────\n")
+
 def cargar_archivo():
     global pdf_paths
     archivos = filedialog.askopenfilenames(
@@ -605,7 +620,7 @@ def procesar_pdf():
                     messagebox.showwarning("Advertencia", "No se encontró la página con 'ESTADO DE CUENTA'.")
                     return
 
-                first_page = pdf.pages[first_page_index]
+                first_page = pdf.pages[1]
 
                 # Extraer datos de encabezados a partir de la primera página relevante
                 words_first_page = first_page.extract_words()
@@ -709,7 +724,7 @@ def procesar_pdf():
                         
                         # Saltar encabezados repetidos en páginas posteriores a la primera relevante
                         if page_index >= first_page_index + 1:
-                            header_keywords = ["FECHA", "MONTO DEL DEPOSITO", "MONTO DEL RETIRO", "SALDO"]
+                            header_keywords = ["FECHA", "DEPOSITO", "RETIRO", "SALDO"]
                             if all(keyword in line_text_upper for keyword in header_keywords):
                                 continue
 
@@ -865,6 +880,56 @@ def procesar_pdf():
                 for cell in row:
                     cell.alignment = Alignment(wrap_text=True)
 
+            for sh in ("BDP1", "BDP2"):
+                if sh in wb.sheetnames: del wb[sh]
+
+            df=pd.read_excel(ruta_salida,engine="openpyxl")
+            df_dep=df[df["Monto del retiro"].isna()].copy()    
+
+            def volcar(ws_dest, modo):
+                for i,col in enumerate(df_dep.columns,1):
+                    h=ws_dest.cell(row=1,column=i,value=col)
+                    h.font=Font(bold=True,color="FFFFFF"); h.fill=header_fill
+                    h.alignment=Alignment(horizontal="center"); h.border=thin_border
+
+                r=2
+                for fecha,bloque in df_dep.groupby("Fecha"):
+                # movimientos
+                    for _,fila in bloque.iterrows():
+                        for i,val in enumerate(fila,1):
+                            c=ws_dest.cell(row=r,column=i,value=val); c.border=thin_border
+                        r+=1
+                    
+                    bold=Font(bold=True)
+
+                    if modo=="BDP1":
+                        for _,fila in bloque.iterrows():
+                            for i,val in enumerate(fila,1):
+                                v="TOTAL" if i==1 else val
+                                c=ws_dest.cell(row=r,column=i,value=v)
+                                c.font=bold; c.border=thin_border
+                            r+=1
+                        r+=1  # blanco después
+
+                    elif modo=="BDP2":
+                        total=bloque["Monto del deposito"].sum()
+                        ws_dest.cell(row=r,column=1,value="TOTAL").border=thin_border
+                        ws_dest.cell(row=r,column=1,value="TOTAL").font=bold
+                        ws_dest.cell(row=r,column=2,
+                                    value=f"Ingresos totales del día {fecha}").border=thin_border
+                        ws_dest.cell(row=r,column=2,
+                                    value=f"Ingresos totales del día {fecha}").font=bold
+                        ws_dest.cell(row=r,column=3,value=total).border=thin_border
+                        ws_dest.cell(row=r,column=3,value=total).font=bold
+                        r+=2  # blanco
+
+                # auto‑ancho
+                for col in ws_dest.columns:
+                    ws_dest.column_dimensions[col[0].column_letter].width= \
+                        max(len(str(c.value)) if c.value else 0 for c in col)+2
+                
+            volcar(wb.create_sheet("BDP1"), modo="BDP1")
+            volcar(wb.create_sheet("BDP2"), modo="BDP2")
             wb.save(ruta_salida)
             messagebox.showinfo("Éxito", f"Archivo Excel generado: {ruta_salida}")
 

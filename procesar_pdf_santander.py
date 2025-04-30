@@ -18,6 +18,8 @@ MIN_REF_FRACTION = 0.2    # Umbral mínimo de fracción en NO. REF.
 MESES_CORTOS = {"ENE", "FEB", "MAR", "ABR", "MAY", "JUN",
                 "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"}
 
+NUM_CHR = re.compile(r'^[0-9,().-]$')
+
 def es_linea_movimiento(linea):
     """
     Determina si la línea (o token) inicia un 'movimiento' nuevo
@@ -33,6 +35,8 @@ def es_linea_movimiento(linea):
     if mes not in MESES_CORTOS:
         return False
     return True
+
+
 
 def es_numero_monetario(texto):
     """
@@ -64,6 +68,39 @@ def parse_monetario(txt):
 def dist(a, b):
     """Distancia absoluta entre dos valores."""
     return abs(a - b)
+
+def unir_fragmentos_numericos(words_in_line, umbral=1.5):
+    """
+    Devuelve una nueva lista de words donde los tokens numéricos contiguos
+    (misma línea y separados ≤ umbral pt) se fusionan.
+    """
+    fusionados = []
+    buf = []
+    for w in sorted(words_in_line, key=lambda w: w['x0']):
+        if NUM_CHR.match(w['text']):           # ¿es carácter numérico?
+            if buf and (w['x0'] - buf[-1]['x1']) > umbral:
+                fusionados.append(combinar(buf))
+                buf = []
+            buf.append(w)
+        else:
+            if buf:
+                fusionados.append(combinar(buf))
+                buf = []
+            fusionados.append(w)               # texto normal
+    if buf:
+        fusionados.append(combinar(buf))
+    return fusionados
+
+def combinar(fragmentos):
+    texto = "".join(f['text'] for f in fragmentos)
+    x0 = fragmentos[0]['x0']
+    x1 = fragmentos[-1]['x1']
+    top = min(f['top'] for f in fragmentos)
+    bottom = max(f['bottom'] for f in fragmentos)
+    nuevo = fragmentos[0].copy()
+    nuevo.update({'text': texto, 'x0': x0, 'x1': x1,
+                  'top': top, 'bottom': bottom})
+    return nuevo
 
 def cargar_archivo():
     global pdf_paths
@@ -99,7 +136,7 @@ def procesar_pdf():
                 # =======================
                 # 1) DETECTAR ENCABEZADOS EN LA 1RA PÁGINA
                 # =======================
-                page0 = pdf.pages[0]
+                page0 = pdf.pages[1]
 
                 regionEmpresa = (43.5, 71.729, 369, 76.63)
                 regionNoCliente = (479.98, 77.378, 528, 82.279)
@@ -112,7 +149,7 @@ def procesar_pdf():
 
                 words_page0 = page0.extract_words()
 
-                encabezados_buscar = ["RETIROS", "DEPOSITOS", "SALDO"]
+                encabezados_buscar = ["DEPOSITOS", "RETIROS", "SALDO"]
                 col_positions = {}
 
                 # Agrupamos las palabras de la primera página por 'top' para formar líneas
@@ -135,6 +172,10 @@ def procesar_pdf():
                             if w_text_upper in encabezados_buscar:
                                 center_x = (w['x0'] + w['x1']) / 2
                                 col_positions[w_text_upper] = center_x
+                                print(f"[DBG] Encabezado {w_text_upper:<8}"
+                                f" x0={w['x0']:.1f}  x1={w['x1']:.1f}"
+                                f" top={w['top']:.1f} bottom={w['bottom']:.1f}"
+                                f" center_x={center_x:.1f}")
                         break
 
                 columnas_ordenadas = sorted(col_positions.items(), key=lambda x: x[1])
@@ -159,7 +200,7 @@ def procesar_pdf():
                 skip_phrases = [s.upper() for s in skip_phrases]
 
                 stop_phrases = [
-                    "INFORMACIONFISCAL",
+                    "INFORMACION FISCAL",
                 ]
 
                 # ** Header repetido ** (el que quieres omitir si aparece en cada página)
@@ -182,14 +223,16 @@ def procesar_pdf():
                 todos_los_movimientos = []
                 movimiento_actual = None
 
+
                 # =======================
                 # 4) RECORRER TODAS LAS PÁGINAS
                 # =======================
                 for page_index, page in enumerate(pdf.pages):
+                    words = page.extract_words()
                     if stop_reading:
                         break
-
-                    words = page.extract_words()
+                    if page_index > 0:
+                        words = [w for w in words if w['top'] >= 36.25]    
                     lineas_dict = {}
                     for w in words:
                         top_approx = int(w['top'])
@@ -259,11 +302,25 @@ def procesar_pdf():
 
                         # 7) ¿Es un nuevo movimiento? => si la línea empieza con dd-mmm-aaaa
                         tokens_line = line_text_upper.split()
-                        if len(tokens_line) > 0 and es_linea_movimiento(tokens_line[0]):
-                            # Guardar el anterior, si existía
+                        es_mov = len(tokens_line) > 0 and es_linea_movimiento(tokens_line[0])
+
+                        # if len(tokens_line) > 0 and es_linea_movimiento(tokens_line[0]):
+                        #     # Guardar el anterior, si existía
+                        #     if movimiento_actual:
+                        #         todos_los_movimientos.append(movimiento_actual)
+
+                        #     movimiento_actual = {
+                        #         "Fecha": tokens_line[0],
+                        #         "Folio": None,
+                        #         "Descripción": "",
+                        #         "Depositos": None,
+                        #         "Retiros": None,
+                        #         "Saldo": None,
+                        #         "Fecha_tokens": [tokens_line[0]]
+                        #     }
+                        if es_mov:
                             if movimiento_actual:
                                 todos_los_movimientos.append(movimiento_actual)
-
                             movimiento_actual = {
                                 "Fecha": tokens_line[0],
                                 "Folio": None,
@@ -285,7 +342,9 @@ def procesar_pdf():
                                 }
 
                         # 8) Asignar folio, montos y descripción
-                        for w in words_in_line:
+                        # for w in words_in_line:
+                        words_proc = unir_fragmentos_numericos(words_in_line) if es_mov else words_in_line
+                        for w in words_proc:
                             txt = w['text'].strip()
                             center_w = (w['x0'] + w['x1']) / 2
 
